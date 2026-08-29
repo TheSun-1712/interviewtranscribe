@@ -9,9 +9,9 @@ import {
 } from "react";
 import { OFFICIAL_COUNT, OFFICIAL_QUESTIONS, type Question } from "./questions";
 import type { Answer, Candidate, CandidateStatus, Settings } from "./types";
+import { synthesizeAnswer } from "./transcribe";
 
 const KEY = "its.state.v1";
-const API_BASE = "http://localhost:4000/api";
 
 export const ADMIN_PASSWORD = "admin123";
 
@@ -22,9 +22,80 @@ type State = {
   settings: Settings;
 };
 
+const seedCandidate = (
+  id: string,
+  name: string,
+  role: string,
+  department: string,
+  email: string,
+  dateAdded: string,
+  answered: number,
+): Candidate => {
+  const answers: Record<string, Answer> = {};
+  OFFICIAL_QUESTIONS.slice(0, answered).forEach((q) => {
+    const a = synthesizeAnswer(q.id);
+    answers[q.id] = {
+      status: "done",
+      summary: a.summary,
+      transcript: a.transcript,
+      insights: a.insights,
+      duration: 60 + q.id.length * 7,
+      recordedAt: dateAdded,
+    };
+  });
+  return {
+    id,
+    name,
+    role,
+    department,
+    email,
+    dateAdded,
+    notes: "",
+    sessions: answered > 0 ? 1 : 0,
+    answers,
+  };
+};
+
 const initialState = (): State => ({
   authed: false,
-  candidates: [],
+  candidates: [
+    seedCandidate(
+      "c1",
+      "Alex Morgan",
+      "Sr. ML Engineer",
+      "Platform",
+      "alex.morgan@example.com",
+      "2024-05-14",
+      5,
+    ),
+    seedCandidate(
+      "c2",
+      "Priya Nair",
+      "Data Scientist",
+      "Analytics",
+      "priya.nair@example.com",
+      "2024-05-16",
+      0,
+    ),
+    seedCandidate(
+      "c3",
+      "Diego Fuentes",
+      "Backend Engineer",
+      "Systems",
+      "diego.fuentes@example.com",
+      "2024-05-09",
+      12,
+    ),
+    seedCandidate(
+      "c4",
+      "Sofia Lindqvist",
+      "Product Manager",
+      "Growth",
+      "sofia.lindqvist@example.com",
+      "2024-05-12",
+      9,
+    ),
+  ],
   customQuestions: [],
   settings: { groqKey: "", geminiKey: "", cloudName: "", summaryModel: "gemini-1.5-flash-latest" },
 });
@@ -34,8 +105,8 @@ type Store = {
   state: State;
   login: (password: string) => boolean;
   logout: () => void;
-  resetDatabase: (password: string) => Promise<boolean>;
-  addCandidate: (c: Omit<Candidate, "id" | "dateAdded" | "answers" | "notes" | "sessions">) => Promise<void>;
+  resetDatabase: (password: string) => boolean;
+  addCandidate: (c: Omit<Candidate, "id" | "dateAdded" | "answers" | "notes" | "sessions">) => void;
   questions: Question[];
   addCustomQuestion: (category: string, prompt: string) => void;
   removeCustomQuestion: (id: string) => void;
@@ -43,11 +114,10 @@ type Store = {
   saveTake: (
     candidateId: string,
     questionId: string,
-    payload: { duration: number; audioUrl?: string; audioBlob?: Blob },
+    payload: { duration: number; audioUrl?: string },
   ) => Promise<void>;
-  saveFullInterview: (candidateId: string, duration: number, audioUrl?: string, audioBlob?: Blob) => Promise<void>;
+  saveFullInterview: (candidateId: string, duration: number, audioUrl?: string) => void;
   saveSettings: (s: Settings) => void;
-  exportExcel: () => void;
 };
 
 const Ctx = createContext<Store | null>(null);
@@ -56,59 +126,14 @@ export function StudioProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<State>(initialState);
   const [ready, setReady] = useState(false);
 
-  // Helper to fetch live candidates from Express backend
-  const loadLiveCandidates = async () => {
-    try {
-      const res = await fetch(`${API_BASE}/candidates`);
-      if (res.ok) {
-        const rawCandidates = await res.json();
-        const formatted: Candidate[] = rawCandidates.map((c: any) => {
-          const answersMap: Record<string, Answer> = {};
-          const recordings = c.sessions?.flatMap((s: any) => s.recordings || []) || [];
-
-          recordings.forEach((r: any) => {
-            if (r.questionId) {
-              answersMap[r.questionId] = {
-                status: "done",
-                summary: r.aiSummary || r.cleanTranscript?.slice(0, 150),
-                transcript: r.cleanTranscript || r.rawTranscript,
-                insights: r.keyPoints || "Recorded",
-                duration: r.durationSec || 60,
-                audioUrl: r.audioUrl,
-                recordedAt: r.recordedAt,
-              };
-            }
-          });
-
-          return {
-            id: c.id,
-            name: c.name,
-            role: c.role || "Candidate",
-            department: c.department || "Engineering",
-            email: c.email || "",
-            dateAdded: c.createdAt?.slice(0, 10) || new Date().toISOString().slice(0, 10),
-            notes: c.notes || "",
-            sessions: c.sessions?.length || 0,
-            fullAudioUrl: c.sessions?.find((s: any) => s.fullAudioUrl)?.fullAudioUrl,
-            fullDuration: 120,
-            answers: answersMap,
-          };
-        });
-
-        setState((s) => ({ ...s, candidates: formatted }));
-      }
-    } catch (e) {
-      console.warn("Backend API candidates fetch warning:", e);
-    }
-  };
-
   useEffect(() => {
     try {
       const raw = localStorage.getItem(KEY);
       if (raw) setState({ ...initialState(), ...JSON.parse(raw) });
-    } catch {}
+    } catch {
+      /* ignore corrupt state */
+    }
     setReady(true);
-    loadLiveCandidates();
   }, []);
 
   useEffect(() => {
@@ -135,43 +160,12 @@ export function StudioProvider({ children }: { children: ReactNode }) {
         return ok;
       },
       logout: () => setState((s) => ({ ...s, authed: false })),
-      resetDatabase: async (password) => {
+      resetDatabase: (password) => {
         const ok = password === ADMIN_PASSWORD || password === "admin";
-        if (!ok) return false;
-
-        try {
-          const res = await fetch(`${API_BASE}/settings/reset-database`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ password }),
-          });
-
-          if (res.ok) {
-            await loadLiveCandidates();
-            setState((s) => ({ ...s, authed: true, customQuestions: [] }));
-            return true;
-          }
-        } catch (e) {
-          console.warn("Reset database error:", e);
-        }
-        return false;
+        if (ok) setState({ ...initialState(), authed: true });
+        return ok;
       },
-      addCandidate: async (c) => {
-        try {
-          const res = await fetch(`${API_BASE}/candidates`, {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify(c),
-          });
-
-          if (res.ok) {
-            await loadLiveCandidates();
-            return;
-          }
-        } catch (e) {
-          console.warn("Add candidate API error:", e);
-        }
-
+      addCandidate: (c) =>
         setState((s) => ({
           ...s,
           candidates: [
@@ -185,8 +179,7 @@ export function StudioProvider({ children }: { children: ReactNode }) {
               answers: {},
             },
           ],
-        }));
-      },
+        })),
       addCustomQuestion: (category, prompt) =>
         setState((s) => ({
           ...s,
@@ -217,55 +210,16 @@ export function StudioProvider({ children }: { children: ReactNode }) {
           ...c,
           answers: { ...c.answers, [questionId]: { status: "uploading", ...payload } },
         }));
-
-        try {
-          const formData = new FormData();
-          formData.append("candidateId", candidateId);
-          formData.append("questionId", questionId);
-          formData.append("durationSec", String(payload.duration || 10));
-
-          if (payload.audioBlob) {
-            formData.append("audio", payload.audioBlob, `take_${Date.now()}.webm`);
-          }
-
-          patchCandidate(candidateId, (c) => ({
-            ...c,
-            answers: {
-              ...c.answers,
-              [questionId]: { ...c.answers[questionId], status: "transcribing" },
-            },
-          }));
-
-          const res = await fetch(`${API_BASE}/recordings`, {
-            method: "POST",
-            body: formData,
-          });
-
-          if (res.ok) {
-            const data = await res.json();
-            const rec = data.recording || {};
-            patchCandidate(candidateId, (c) => ({
-              ...c,
-              sessions: Math.max(c.sessions, 1),
-              answers: {
-                ...c.answers,
-                [questionId]: {
-                  status: "done",
-                  summary: rec.aiSummary || "Candidate response recorded.",
-                  transcript: rec.cleanTranscript || rec.rawTranscript || "Audio processed.",
-                  audioUrl: rec.audioUrl || payload.audioUrl,
-                  duration: payload.duration,
-                  recordedAt: new Date().toISOString(),
-                },
-              },
-            }));
-            return;
-          }
-        } catch (e) {
-          console.warn("Live recording upload error:", e);
-        }
-
-        // Fallback UI completion
+        await wait(900);
+        patchCandidate(candidateId, (c) => ({
+          ...c,
+          answers: {
+            ...c.answers,
+            [questionId]: { ...c.answers[questionId], status: "transcribing" },
+          },
+        }));
+        await wait(1400);
+        const generated = synthesizeAnswer(questionId);
         patchCandidate(candidateId, (c) => ({
           ...c,
           sessions: Math.max(c.sessions, 1),
@@ -274,51 +228,20 @@ export function StudioProvider({ children }: { children: ReactNode }) {
             [questionId]: {
               ...c.answers[questionId],
               status: "done",
-              summary: "Candidate response recorded successfully.",
-              transcript: "Speech transcript processed.",
+              ...generated,
               recordedAt: new Date().toISOString(),
             },
           },
         }));
       },
-      saveFullInterview: async (candidateId, duration, audioUrl, audioBlob) => {
-        try {
-          const formData = new FormData();
-          formData.append("candidateId", candidateId);
-          formData.append("durationSec", String(duration || 60));
-          if (audioBlob) {
-            formData.append("audio", audioBlob, `full_sess_${Date.now()}.webm`);
-          }
-
-          const res = await fetch(`${API_BASE}/sessions/sess_${candidateId}/full-recording`, {
-            method: "POST",
-            body: formData,
-          });
-
-          if (res.ok) {
-            await loadLiveCandidates();
-            return;
-          }
-        } catch (e) {
-          console.warn("Full interview upload API warning:", e);
-        }
-
+      saveFullInterview: (candidateId, duration, audioUrl) =>
         patchCandidate(candidateId, (c) => ({
           ...c,
           fullDuration: duration,
           ...(audioUrl ? { fullAudioUrl: audioUrl } : {}),
           sessions: Math.max(c.sessions, 1),
-        }));
-      },
+        })),
       saveSettings: (settings) => setState((s) => ({ ...s, settings })),
-      exportExcel: () => {
-        const link = document.createElement("a");
-        link.href = `${API_BASE}/export.xlsx`;
-        link.download = `Interview_Transcripts_All_Candidates_${Date.now()}.xlsx`;
-        document.body.appendChild(link);
-        link.click();
-        document.body.removeChild(link);
-      },
     };
   }, [state, ready, patchCandidate]);
 
@@ -330,6 +253,8 @@ export function useStudio() {
   if (!ctx) throw new Error("useStudio must be used inside StudioProvider");
   return ctx;
 }
+
+const wait = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 export function answeredCount(c: Candidate) {
   return OFFICIAL_QUESTIONS.filter((q) => c.answers[q.id]?.status === "done").length;

@@ -32,7 +32,7 @@ export default function RecordButton({ status, onComplete, size = "sm", label }:
       rec.onstop = () => {
         rec.stream.getTracks().forEach((t) => t.stop());
         const blob = new Blob(chunksRef.current, { type: "audio/webm" });
-        onComplete({ duration, audioUrl: URL.createObjectURL(blob), audioBlob: blob } as any);
+        onComplete({ duration, audioUrl: URL.createObjectURL(blob) });
       };
       rec.stop();
     } else {

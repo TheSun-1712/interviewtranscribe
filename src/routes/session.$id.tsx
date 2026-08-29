@@ -100,9 +100,10 @@ function SessionView() {
           status={fullStatus}
           savedDuration={candidate.fullDuration}
           onStart={() => setFullStatus("recording")}
-          onFinish={async (duration, url, blob) => {
+          onFinish={async (duration, url) => {
             setFullStatus("transcribing");
-            await saveFullInterview(candidate.id, duration, url, blob);
+            saveFullInterview(candidate.id, duration, url);
+            await new Promise((r) => setTimeout(r, 1600));
             setFullStatus("done");
           }}
         />
@@ -169,7 +170,7 @@ function FullRecorder({
   status: "idle" | "recording" | "transcribing" | "done";
   savedDuration?: number | undefined;
   onStart: () => void;
-  onFinish: (duration: number, url?: string, blob?: Blob) => void;
+  onFinish: (duration: number, url?: string) => void;
 }) {
   const message =
     status === "recording"
@@ -191,7 +192,7 @@ function FullRecorder({
           size="lg"
           label="🎙️ Start Full Interview Rec"
           status={status === "transcribing" ? "transcribing" : status === "done" ? "done" : "idle"}
-          onComplete={({ duration, audioUrl, audioBlob }: any) => onFinish(duration, audioUrl, audioBlob)}
+          onComplete={({ duration, audioUrl }) => onFinish(duration, audioUrl)}
         />
         <div className="min-w-0">
           <p className="mono text-lg leading-none font-semibold">

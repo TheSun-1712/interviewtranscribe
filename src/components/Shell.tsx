@@ -10,7 +10,7 @@ const NAV = [
 ] as const;
 
 export default function Shell({ children }: { children: ReactNode }) {
-  const { ready, state, logout, resetDatabase, exportExcel } = useStudio();
+  const { ready, state, logout, resetDatabase } = useStudio();
   const navigate = useNavigate();
   const pathname = useRouterState({ select: (s) => s.location.pathname });
   const [resetOpen, setResetOpen] = useState(false);
@@ -29,9 +29,8 @@ export default function Shell({ children }: { children: ReactNode }) {
     );
   }
 
-  const confirmReset = async () => {
-    const ok = await resetDatabase(password);
-    if (ok) {
+  const confirmReset = () => {
+    if (resetDatabase(password)) {
       setResetOpen(false);
       setPassword("");
       setResetError(null);
@@ -79,7 +78,7 @@ export default function Shell({ children }: { children: ReactNode }) {
           </nav>
           <div className="ml-auto flex items-center gap-2">
             <button
-              onClick={() => exportExcel ? exportExcel() : exportAllCandidates(state.candidates)}
+              onClick={() => exportAllCandidates(state.candidates)}
               className="rounded-full bg-signal px-3.5 py-2 text-[11px] font-semibold text-background transition-colors hover:bg-live"
             >
               Export Excel
