@@ -38,8 +38,20 @@ export default function SessionView({
   const handleStartFullRec = async () => {
     try {
       fullAudioChunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      let options = {};
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        options = { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 };
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, options);
       fullMediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
@@ -47,7 +59,7 @@ export default function SessionView({
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(fullAudioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(fullAudioChunksRef.current, { type: options.mimeType || "audio/webm" });
         stream.getTracks().forEach((t) => t.stop());
 
         setFullRecStage("processing");
@@ -65,7 +77,7 @@ export default function SessionView({
         setTimeout(() => setFullRecStage("idle"), 2000);
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250);
       setFullRecStage("recording");
       setFullRecTime(0);
     } catch (err) {

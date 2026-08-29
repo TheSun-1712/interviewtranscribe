@@ -182,12 +182,22 @@ Return your answer as a JSON array of objects with keys: index, sectionCategory,
 }
 
 /**
- * Intelligently parse a single continuous full-interview transcript:
- * Categorizes the transcript into EVERY question provided in questionsList.
- * Strips out interviewer questions and isolates ONLY candidate answers per question.
+ * High-Precision Full Interview Segmenter:
+ * 1. Strips out interviewer questions.
+ * 2. Matches candidate spoken answers to exact target question IDs.
+ * 3. NEVER duplicates responses across unanswered questions!
  */
 async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsList = [], settings = {}) {
-  if (!fullTranscriptText || !fullTranscriptText.trim()) return [];
+  if (!fullTranscriptText || !fullTranscriptText.trim()) {
+    return questionsList.map((q) => ({
+      questionId: q.id,
+      category: q.category || "General",
+      questionText: q.text,
+      aiSummary: "Question not asked / No response recorded",
+      keyTakeaways: "N/A",
+      candidateAnswerOnly: "[Not answered in this session]"
+    }));
+  }
 
   const baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
   const apiKey = settings.llmApiKey || process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
@@ -199,25 +209,33 @@ async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsL
     category: q.category || "General"
   }));
 
-  const systemPrompt = `You are a high-precision executive technical interviewer AI. You are given a full continuous audio transcript of an interview and a list of expected target questions.
+  const systemPrompt = `You are a high-precision executive technical interviewer AI. You are given a full continuous audio transcript of an interview containing TWO speakers: the interviewer (asking questions) and the candidate (answering).
 
-CRITICAL MANDATORY INSTRUCTIONS:
-1. You MUST process and include EVERY question listed in the target question array. Do NOT skip any question.
-2. For each target question:
-   a) Locate where the candidate answered or discussed that topic in the continuous transcript.
-   b) STRIP OUT any interviewer questions, prompts, or interjections.
-   c) Extract ONLY the candidate's spoken response text into 'candidateAnswerOnly'.
-   d) Generate a clear 1 to 2 sentence Executive AI Summary of ONLY what the candidate stated into 'aiSummary'.
-   e) Extract 2 key bullet point strengths into 'keyTakeaways'.
-   f) If the candidate did not answer or discuss a specific question, set candidateAnswerOnly: "Candidate did not answer this question", aiSummary: "No answer recorded for this question."
+STRICT DIRECTIVES:
+1. Examine the transcript and match the candidate's spoken responses to the provided Target Questions list.
+2. For EVERY question in the Target Questions list:
+   - If the candidate ANSWERED this question in the transcript:
+     a) STRIP OUT all interviewer questions/prompts.
+     b) Set 'candidateAnswerOnly' to ONLY the candidate's direct spoken statements.
+     c) Set 'aiSummary' to a concise 1-2 sentence summary of ONLY the candidate's answer. Do NOT repeat or mention the interviewer's question.
+     d) Set 'keyTakeaways' to 2 key candidate strengths.
+     e) Set 'wasAnswered': true.
+   - If the candidate DID NOT answer this question in the transcript (or the question was not asked):
+     a) Set 'candidateAnswerOnly': "[Not answered in this session]"
+     b) Set 'aiSummary': "Question not asked in session"
+     c) Set 'keyTakeaways': "N/A"
+     d) Set 'wasAnswered': false.
 
-RETURN ONLY a JSON array containing an object for EVERY question provided. Each object must have keys:
-- questionId (MUST match the questionId provided)
+CRITICAL RULE: DO NOT copy or paste the entire transcript across questions that were NOT answered.
+
+RETURN ONLY a JSON array of objects with keys:
+- questionId (string matching provided questionId)
 - category (string)
 - questionText (string)
 - aiSummary (string)
 - keyTakeaways (string)
-- candidateAnswerOnly (string)`;
+- candidateAnswerOnly (string)
+- wasAnswered (boolean)`;
 
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -230,7 +248,7 @@ RETURN ONLY a JSON array containing an object for EVERY question provided. Each 
         model: model,
         messages: [
           { role: "system", content: systemPrompt },
-          { role: "user", content: `Target Questions:\n${JSON.stringify(questionTemplates, null, 2)}\n\nFull Continuous Interview Audio Transcript:\n"${fullTranscriptText}"` }
+          { role: "user", content: `Target Questions (1 to 12):\n${JSON.stringify(questionTemplates, null, 2)}\n\nFull Continuous Audio Transcript:\n"${fullTranscriptText}"` }
         ],
         temperature: 0.1
       })
@@ -242,17 +260,37 @@ RETURN ONLY a JSON array containing an object for EVERY question provided. Each 
       const jsonMatch = content ? content.match(/\[[\s\S]*\]/) : null;
       if (jsonMatch) {
         const parsedArray = JSON.parse(jsonMatch[0]);
-        // Map and ensure EVERY question from questionsList is present
+
         return questionsList.map((q) => {
           const matched = parsedArray.find((p) => p.questionId === q.id || p.questionText === q.text);
-          return {
-            questionId: q.id,
-            category: matched?.category || q.category || "General",
-            questionText: q.text,
-            aiSummary: matched?.aiSummary || "Answer summarized from continuous recording.",
-            keyTakeaways: matched?.keyTakeaways || "Candidate response recorded.",
-            candidateAnswerOnly: matched?.candidateAnswerOnly || fullTranscriptText
-          };
+          if (matched && matched.wasAnswered && matched.candidateAnswerOnly && !matched.candidateAnswerOnly.includes("[Not answered")) {
+            return {
+              questionId: q.id,
+              category: matched.category || q.category || "General",
+              questionText: q.text,
+              aiSummary: matched.aiSummary || "Candidate response summarized.",
+              keyTakeaways: matched.keyTakeaways || "Response recorded.",
+              candidateAnswerOnly: matched.candidateAnswerOnly
+            };
+          } else if (matched && matched.candidateAnswerOnly) {
+            return {
+              questionId: q.id,
+              category: q.category || "General",
+              questionText: q.text,
+              aiSummary: matched.aiSummary || "Question not asked in session",
+              keyTakeaways: "N/A",
+              candidateAnswerOnly: matched.candidateAnswerOnly
+            };
+          } else {
+            return {
+              questionId: q.id,
+              category: q.category || "General",
+              questionText: q.text,
+              aiSummary: "Question not asked in session",
+              keyTakeaways: "N/A",
+              candidateAnswerOnly: "[Not answered in this session]"
+            };
+          }
         });
       }
     }
@@ -260,13 +298,14 @@ RETURN ONLY a JSON array containing an object for EVERY question provided. Each 
     console.warn("[LLM Full-Interview Division Exception]:", err.message);
   }
 
-  return questionsList.map((q) => ({
+  // Safe Fallback: do NOT duplicate transcript!
+  return questionsList.map((q, idx) => ({
     questionId: q.id,
     category: q.category || "General",
     questionText: q.text,
-    aiSummary: fullTranscriptText.slice(0, 150) + "...",
-    keyTakeaways: "Candidate full interview audio recorded.",
-    candidateAnswerOnly: fullTranscriptText
+    aiSummary: idx === 0 ? fullTranscriptText.slice(0, 150) + "..." : "Question not asked in session",
+    keyTakeaways: idx === 0 ? "Candidate introduction recorded." : "N/A",
+    candidateAnswerOnly: idx === 0 ? fullTranscriptText : "[Not answered in this session]"
   }));
 }
 

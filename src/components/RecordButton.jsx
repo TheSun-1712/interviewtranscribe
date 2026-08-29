@@ -23,8 +23,20 @@ export default function RecordButton({ questionId, onSaveTake }) {
   const handleStartRecord = async () => {
     try {
       audioChunksRef.current = [];
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation: true,
+          noiseSuppression: true,
+          autoGainControl: true
+        }
+      });
+
+      let options = {};
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        options = { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 };
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, options);
       mediaRecorderRef.current = mediaRecorder;
 
       mediaRecorder.ondataavailable = (e) => {
@@ -34,13 +46,12 @@ export default function RecordButton({ questionId, onSaveTake }) {
       };
 
       mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || "audio/webm" });
         const audioUrl = URL.createObjectURL(audioBlob);
 
         // Stop mic tracks
         stream.getTracks().forEach((track) => track.stop());
 
-        // Stage: Uploading -> Transcribing -> Done
         setStage("uploading");
         setTimeout(() => setStage("transcribing"), 1000);
 
@@ -65,7 +76,7 @@ export default function RecordButton({ questionId, onSaveTake }) {
         }, 1500);
       };
 
-      mediaRecorder.start();
+      mediaRecorder.start(250); // Collect audio slice every 250ms for smooth recording
       setStage("recording");
       setRecordingTime(0);
     } catch (err) {

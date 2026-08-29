@@ -4,7 +4,7 @@ const fetch = require("node-fetch");
 const FormData = require("form-data");
 
 /**
- * Transcribe audio using Groq Whisper Large V3 API or local faster-whisper microservice fallback
+ * Transcribe audio using Groq Whisper Large V3 API with language & domain context guidance
  * @param {String} filePath - Local file path of recording
  * @returns {Promise<String>} Transcribed text
  */
@@ -20,7 +20,6 @@ async function transcribeAudio(filePath) {
       const formData = new FormData();
       const filename = path.basename(filePath);
 
-      // Determine mime type
       const ext = path.extname(filePath).toLowerCase();
       let contentType = "audio/webm";
       if (ext === ".mp3") contentType = "audio/mp3";
@@ -33,8 +32,13 @@ async function transcribeAudio(filePath) {
       });
       formData.append("model", "whisper-large-v3");
       formData.append("temperature", "0.0");
+      formData.append("language", "en");
+      formData.append(
+        "prompt",
+        "Technical candidate interview recording containing questions about introduction, problem statement, implementation plan, domain knowledge, DSA ideation, training and development, career vision, AAC focus, stay after hours availability, mentorship interest, and behavioral experiences."
+      );
 
-      console.log(`[Groq API] Sending ${filename} (${contentType}) to Groq Whisper Large V3...`);
+      console.log(`[Groq API] Sending ${filename} (${contentType}) to Groq Whisper Large V3 with domain prompt...`);
 
       const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
