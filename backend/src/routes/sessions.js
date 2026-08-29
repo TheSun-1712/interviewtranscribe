@@ -112,8 +112,20 @@ module.exports = (prisma) => {
       const dividedSections = await parseAndDivideFullInterviewWithLLM(fullTranscript, questionsList, settingsMap);
 
       // 5. Save full audio URL & transcript on Session row
+      let existingSession = await prisma.session.findUnique({ where: { id: sessionId } });
+      if (!existingSession) {
+        const firstCand = await prisma.candidate.findFirst();
+        existingSession = await prisma.session.create({
+          data: {
+            id: sessionId,
+            candidateId: firstCand?.id || (await prisma.candidate.create({ data: { name: "Candidate 1", status: "in_progress" } })).id,
+            status: "in_progress"
+          }
+        });
+      }
+
       const updatedSession = await prisma.session.update({
-        where: { id: sessionId },
+        where: { id: existingSession.id },
         data: {
           fullAudioUrl,
           fullTranscript,
