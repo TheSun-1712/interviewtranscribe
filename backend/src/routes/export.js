@@ -4,7 +4,7 @@ const { divideAndCategorizeInterviewWithLLM } = require("../services/llm");
 const router = express.Router();
 
 module.exports = (prisma) => {
-  // GET export Excel workbook with LLM section auto-partitioning
+  // GET export Excel workbook with master all candidates & LLM section auto-partitioning
   router.get("/", async (req, res) => {
     try {
       const { candidateId, sessionId } = req.query;
@@ -31,80 +31,91 @@ module.exports = (prisma) => {
       settingsList.forEach((s) => (settingsMap[s.key] = s.value));
 
       const workbook = XLSX.utils.book_new();
-      const targetCandidate = candidateId
-        ? candidates.find((c) => c.id === candidateId) || candidates[0]
-        : candidates[0];
 
-      const recordingsList = targetCandidate?.sessions.flatMap((s) => s.recordings) || [];
+      // Determine candidate focus (single candidate vs ALL candidates)
+      const isMasterExport = !candidateId || candidateId === "all";
+      const targetCandidates = isMasterExport
+        ? candidates
+        : candidates.filter((c) => c.id === candidateId);
 
-      // Build Q&A list for LLM section partitioning
-      const qAndAList = questions.map((q) => {
-        const qTakes = recordingsList.filter((r) => r.questionId === q.id);
-        const activeTake = qTakes.find((t) => t.isActive) || qTakes[qTakes.length - 1];
-        return {
-          questionId: q.id,
-          questionText: q.text,
-          category: q.category || "General",
-          transcript: activeTake ? (activeTake.cleanTranscript || activeTake.rawTranscript || "") : "",
-          audioUrl: activeTake?.audioUrl || "[No Audio Link]",
-          durationSec: activeTake?.durationSec || 0,
-          takeNumber: activeTake?.takeNumber || 0
-        };
-      });
+      // Collect all Q&A data
+      const allQAData = [];
 
-      // Run LLM auto-categorization & division pass
-      const categorizedQandA = await divideAndCategorizeInterviewWithLLM(qAndAList, settingsMap);
+      for (const cand of targetCandidates) {
+        const candRecordings = cand.sessions.flatMap((s) => s.recordings);
+        for (const q of questions) {
+          const qTakes = candRecordings.filter((r) => r.questionId === q.id);
+          const activeTake = qTakes.find((t) => t.isActive) || qTakes[qTakes.length - 1];
+
+          allQAData.push({
+            candidateId: cand.id,
+            candidateName: cand.name,
+            candidateRole: cand.role || "Candidate",
+            questionId: q.id,
+            questionText: q.text,
+            category: q.category || "General",
+            transcript: activeTake ? (activeTake.cleanTranscript || activeTake.rawTranscript || "") : "",
+            aiSummary: activeTake?.aiSummary || (activeTake?.cleanTranscript ? activeTake.cleanTranscript.slice(0, 150) + "..." : "[No response]"),
+            keyTakeaways: activeTake?.keyPoints || "Direct response recorded.",
+            audioUrl: activeTake?.audioUrl || "[No Audio Link]",
+            durationSec: activeTake?.durationSec || 0
+          });
+        }
+      }
 
       // ==========================================
-      // SHEET 1: SESSION SUMMARY
+      // SHEET 1: MASTER SUMMARY OVERVIEW
       // ==========================================
-      const summaryRows = categorizedQandA.map((item, idx) => ({
-        "Q#": idx + 1,
-        "Section Category": item.sectionName,
+      const summaryRows = allQAData.map((item, idx) => ({
+        "ID": idx + 1,
+        "Candidate Name": item.candidateName,
+        "Candidate Role": item.candidateRole,
+        "Section Category": item.category,
         "Question Text": item.questionText,
-        "AI Section Summary": item.aiSummary,
-        "Key Strengths & Takeaways": item.keyTakeaways,
-        "Duration (s)": item.durationSec ? `${item.durationSec}s` : "-",
+        "Executive AI Answer Summary": item.aiSummary,
+        "Key Strengths & Insights": item.keyTakeaways,
+        "Duration": item.durationSec ? `${item.durationSec}s` : "-",
         "Cloudinary Audio Link": item.audioUrl,
-        "Full Transcript": item.transcript || "[No Transcript]"
+        "Spoken Answer Transcript": item.transcript || "[No response]"
       }));
 
       const summarySheetData = [
-        ["INTERVIEW TRANSCRIPTION & CATEGORIZED SECTION REPORT"],
+        ["MASTER INTERVIEW TRANSCRIPTION & EXECUTIVE SUMMARY REPORT"],
         ["Generated On", new Date().toLocaleString()],
         [],
-        ["CANDIDATE METADATA"],
-        ["Full Name:", targetCandidate?.name || "All Candidates", "", "Status:", targetCandidate?.status || "N/A"],
-        ["Role / Position:", targetCandidate?.role || "N/A", "", "Department:", targetCandidate?.department || "N/A"],
-        ["Email:", targetCandidate?.email || "N/A", "", "Total Recordings:", recordingsList.length],
+        ["CANDIDATE SCOPE"],
+        ["Scope:", isMasterExport ? `ALL CANDIDATES (${targetCandidates.length} Total)` : targetCandidates[0]?.name || "Single Candidate"],
+        ["Total Questions Tracked:", questions.length],
         [],
-        ["SECTION-BY-SECTION ANALYSIS & TRANSCRIPTS"]
+        ["EXECUTIVE QUESTION-BY-QUESTION SUMMARY"]
       ];
 
       const summarySheet = XLSX.utils.aoa_to_sheet(summarySheetData);
-      XLSX.utils.sheet_add_json(summarySheet, summaryRows, { origin: "A10", skipHeader: false });
+      XLSX.utils.sheet_add_json(summarySheet, summaryRows, { origin: "A9", skipHeader: false });
 
       summarySheet["!cols"] = [
-        { wch: 6 },  // Q#
-        { wch: 25 }, // Section Category
+        { wch: 5 },  // ID
+        { wch: 22 }, // Candidate Name
+        { wch: 20 }, // Candidate Role
+        { wch: 22 }, // Section Category
         { wch: 45 }, // Question Text
-        { wch: 50 }, // AI Section Summary
+        { wch: 55 }, // Executive AI Answer Summary
         { wch: 40 }, // Key Strengths
-        { wch: 14 }, // Duration
+        { wch: 12 }, // Duration
         { wch: 45 }, // Audio Link
-        { wch: 65 }  // Full Transcript
+        { wch: 65 }  // Spoken Transcript
       ];
 
-      XLSX.utils.book_append_sheet(workbook, summarySheet, "Session Summary");
+      XLSX.utils.book_append_sheet(workbook, summarySheet, "Master Executive Summary");
 
       // ==========================================
-      // SHEET 2: CATEGORIZED SECTIONS PARTITION
+      // SHEET 2: CATEGORIZED SECTIONS BREAKDOWN
       // ==========================================
       const sectionGroupedRows = [];
       const categoriesMap = {};
 
-      categorizedQandA.forEach((item) => {
-        const cat = item.sectionName || "General";
+      allQAData.forEach((item) => {
+        const cat = item.category || "General";
         if (!categoriesMap[cat]) categoriesMap[cat] = [];
         categoriesMap[cat].push(item);
       });
@@ -114,18 +125,19 @@ module.exports = (prisma) => {
           sectionGroupedRows.push({
             "Section Category": catName,
             "Item #": idx + 1,
+            "Candidate Name": item.candidateName,
             "Question": item.questionText,
-            "AI Answer Summary": item.aiSummary,
+            "Executive AI Summary": item.aiSummary,
             "Key Insights": item.keyTakeaways,
-            "Audio Link": item.audioUrl,
-            "Clean Spoken Transcript": item.transcript || "[No response]"
+            "Cloudinary Audio Link": item.audioUrl,
+            "Spoken Transcript": item.transcript || "[No response]"
           });
         });
       }
 
       const sectionSheet = XLSX.utils.json_to_sheet(sectionGroupedRows);
       sectionSheet["!cols"] = [
-        { wch: 25 }, { wch: 8 }, { wch: 45 }, { wch: 50 }, { wch: 40 }, { wch: 45 }, { wch: 65 }
+        { wch: 22 }, { wch: 8 }, { wch: 22 }, { wch: 45 }, { wch: 55 }, { wch: 40 }, { wch: 45 }, { wch: 65 }
       ];
       XLSX.utils.book_append_sheet(workbook, sectionSheet, "Category Sections Partition");
 
@@ -150,8 +162,10 @@ module.exports = (prisma) => {
       ];
       XLSX.utils.book_append_sheet(workbook, masterSheet, "All Candidates Directory");
 
-      // Set binary output headers
-      const fileName = `Interview_Transcript_Categorized_${Date.now()}.xlsx`;
+      const fileName = isMasterExport
+        ? `Interview_Transcripts_All_Candidates_${Date.now()}.xlsx`
+        : `Interview_Transcript_${(targetCandidates[0]?.name || "Candidate").replace(/\s+/g, "_")}_${Date.now()}.xlsx`;
+
       res.setHeader("Content-Type", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet");
       res.setHeader("Content-Disposition", `attachment; filename="${fileName}"`);
 

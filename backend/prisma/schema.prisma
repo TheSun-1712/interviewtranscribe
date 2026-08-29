@@ -11,7 +11,7 @@ model User {
   id        String    @id @default(cuid())
   email     String    @unique
   name      String
-  role      String    @default("interviewer") // admin | interviewer
+  role      String    @default("interviewer")
   createdAt DateTime  @default(now())
   sessions  Session[]
 }
@@ -28,7 +28,7 @@ model Candidate {
   department  String?
   email       String?
   notes       String?
-  status      String    @default("not_started") // not_started | in_progress | complete
+  status      String    @default("not_started")
   createdAt   DateTime  @default(now())
   sessions    Session[]
 }
@@ -44,15 +44,17 @@ model Question {
 }
 
 model Session {
-  id          String      @id @default(cuid())
-  candidateId String
-  candidate   Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  userId      String?
-  user        User?       @relation(fields: [userId], references: [id])
-  interviewer String?     @default("Lead Interviewer")
-  startedAt   DateTime    @default(now())
-  status      String      @default("in_progress") // in_progress | complete
-  recordings  Recording[]
+  id             String      @id @default(cuid())
+  candidateId    String
+  candidate      Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  userId         String?
+  user           User?       @relation(fields: [userId], references: [id])
+  interviewer    String?     @default("Lead Interviewer")
+  fullAudioUrl   String?     // Cloudinary URL for full continuous interview audio
+  fullTranscript String?     // Complete continuous transcription text
+  startedAt      DateTime    @default(now())
+  status         String      @default("in_progress")
+  recordings     Recording[]
 }
 
 model Recording {
@@ -62,9 +64,11 @@ model Recording {
   questionId      String
   question        Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   takeNumber      Int
-  audioUrl        String?  // Cloudinary secure_url
+  audioUrl        String?  // Cloudinary URL
   rawTranscript   String?
   cleanTranscript String?
+  aiSummary       String?  // Concise AI summary of candidate answer
+  keyPoints       String?  // Key bullet takeaways
   durationSec     Int?
   notes           String?
   isActive        Boolean  @default(true)

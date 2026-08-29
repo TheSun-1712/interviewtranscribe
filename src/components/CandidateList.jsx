@@ -1,5 +1,5 @@
 import React, { useState } from "react";
-import { FileSpreadsheet, Plus, X } from "lucide-react";
+import { FileSpreadsheet, Plus, X, RotateCcw, AlertTriangle } from "lucide-react";
 
 export default function CandidateList({
   candidates,
@@ -9,9 +9,15 @@ export default function CandidateList({
   onAddCandidate,
   onDeleteCandidate,
   onExportExcel,
+  onResetDatabase,
   onLogout
 }) {
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showResetModal, setShowResetModal] = useState(false);
+  const [resetPassword, setResetPassword] = useState("");
+  const [resetError, setResetError] = useState("");
+  const [isResetting, setIsResetting] = useState(false);
+
   const [name, setName] = useState("");
   const [role, setRole] = useState("");
   const [department, setDepartment] = useState("");
@@ -40,6 +46,27 @@ export default function CandidateList({
     setShowAddForm(false);
   };
 
+  const handleResetSubmit = async (e) => {
+    e.preventDefault();
+    setResetError("");
+
+    if (!resetPassword) {
+      setResetError("Please enter admin password");
+      return;
+    }
+
+    setIsResetting(true);
+    const result = await onResetDatabase(resetPassword);
+    setIsResetting(false);
+
+    if (result && result.success) {
+      setShowResetModal(false);
+      setResetPassword("");
+    } else {
+      setResetError(result?.error || "Invalid admin password");
+    }
+  };
+
   return (
     <div>
       {/* Topbar */}
@@ -48,17 +75,80 @@ export default function CandidateList({
         <h1>Candidates</h1>
         <div className="flex-1" />
         <button
-          onClick={onExportExcel}
+          onClick={() => onExportExcel("all")}
           className="ghost-btn font-mono text-xs"
-          title="Export Excel Report"
+          title="Export All Candidates Master Excel Report"
         >
           <FileSpreadsheet className="h-3.5 w-3.5 inline mr-1 text-[var(--teal)]" />
-          Export Excel
+          Export All Candidates Excel
+        </button>
+        <button
+          onClick={() => setShowResetModal(true)}
+          className="ghost-btn font-mono text-xs text-[var(--red)] border-[var(--red)]/40 hover:border-[var(--red)]"
+          title="Reset database and clear all test responses"
+        >
+          <RotateCcw className="h-3.5 w-3.5 inline mr-1" />
+          Reset Database
         </button>
         <button onClick={onLogout} className="ghost-btn font-mono text-xs">
           Log out
         </button>
       </div>
+
+      {/* Password Confirmation Reset Modal */}
+      {showResetModal && (
+        <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="bg-[var(--panel)] border border-[var(--red)]/40 rounded-xl p-6 max-w-md w-full space-y-4 shadow-2xl">
+            <div className="flex items-center gap-3 text-[var(--red)]">
+              <AlertTriangle className="h-6 w-6 shrink-0" />
+              <h3 className="text-lg font-bold font-mono m-0">Confirm Database Reset</h3>
+            </div>
+            <p className="text-xs text-[var(--muted)] m-0 leading-relaxed">
+              This action will permanently delete all candidate recordings, full audio files, AI section summaries, and test sessions.
+            </p>
+
+            <form onSubmit={handleResetSubmit} className="space-y-4">
+              <div>
+                <label className="field-label">Enter Admin Password to Confirm *</label>
+                <input
+                  type="password"
+                  required
+                  placeholder="Enter admin password (e.g. admin123)"
+                  value={resetPassword}
+                  onChange={(e) => setResetPassword(e.target.value)}
+                  className="form-input"
+                />
+                {resetError && (
+                  <span className="font-mono text-[11px] text-[var(--red)] block mt-1.5">
+                    {resetError}
+                  </span>
+                )}
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2 border-t border-[var(--line)]">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowResetModal(false);
+                    setResetError("");
+                    setResetPassword("");
+                  }}
+                  className="ghost-btn text-xs"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  disabled={isResetting}
+                  className="btn-primary text-xs bg-[var(--red)] text-white hover:opacity-90"
+                >
+                  {isResetting ? "Resetting..." : "Yes, Clear & Reset Database"}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* Dashboard Body */}
       <div className="p-[26px_28px] max-w-[1080px] mx-auto space-y-6">

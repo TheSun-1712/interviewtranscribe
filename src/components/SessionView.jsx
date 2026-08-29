@@ -1,6 +1,7 @@
-import React, { useState } from "react";
-import { FileSpreadsheet } from "lucide-react";
+import React, { useState, useRef, useEffect } from "react";
+import { FileSpreadsheet, Mic, Square } from "lucide-react";
 import RecordButton from "./RecordButton";
+import { uploadFullSessionRecording } from "../services/api";
 
 export default function SessionView({
   session,
@@ -15,6 +16,74 @@ export default function SessionView({
   onLogout
 }) {
   const [customQText, setCustomQText] = useState("");
+
+  // Single full-interview continuous recording state
+  const [fullRecStage, setFullRecStage] = useState("idle"); // idle | recording | processing | done
+  const [fullRecTime, setFullRecTime] = useState(0);
+  const fullMediaRecorderRef = useRef(null);
+  const fullAudioChunksRef = useRef([]);
+  const fullTimerRef = useRef(null);
+
+  useEffect(() => {
+    if (fullRecStage === "recording") {
+      fullTimerRef.current = setInterval(() => {
+        setFullRecTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(fullTimerRef.current);
+    }
+    return () => clearInterval(fullTimerRef.current);
+  }, [fullRecStage]);
+
+  const handleStartFullRec = async () => {
+    try {
+      fullAudioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      fullMediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) fullAudioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(fullAudioChunksRef.current, { type: "audio/webm" });
+        stream.getTracks().forEach((t) => t.stop());
+
+        setFullRecStage("processing");
+        try {
+          await uploadFullSessionRecording({
+            sessionId: session.id,
+            audioBlob,
+            durationSec: fullRecTime
+          });
+        } catch (e) {
+          console.warn("Full session audio processing warning:", e);
+        }
+
+        setFullRecStage("done");
+        setTimeout(() => setFullRecStage("idle"), 2000);
+      };
+
+      mediaRecorder.start();
+      setFullRecStage("recording");
+      setFullRecTime(0);
+    } catch (err) {
+      alert("Microphone access denied or unavailable.");
+    }
+  };
+
+  const handleStopFullRec = () => {
+    if (fullMediaRecorderRef.current && fullRecStage === "recording") {
+      fullMediaRecorderRef.current.stop();
+    }
+  };
+
+  const formatTimer = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
 
   const totalRecordingsCount = Object.values(recordingsMap).reduce(
     (acc, takes) => acc + takes.length,
@@ -66,8 +135,8 @@ export default function SessionView({
       {/* Session Body */}
       <div className="p-[22px_28px] max-w-[900px] mx-auto space-y-6">
         {/* Session Header */}
-        <div className="flex items-center gap-[12px] mb-[22px]">
-          <div className="flex-1">
+        <div className="flex items-center gap-[12px] flex-wrap justify-between mb-[22px]">
+          <div>
             <button
               onClick={onBackToCandidates}
               className="font-mono text-[12px] text-[var(--muted)] hover:text-[var(--text)] transition-colors cursor-pointer bg-transparent border-none p-0"
@@ -82,9 +151,43 @@ export default function SessionView({
             </p>
           </div>
 
-          <button onClick={onFinishSession} className="finish-btn">
-            Finish interview &amp; save
-          </button>
+          <div className="flex items-center gap-3">
+            {/* Single Full Interview Recording Button */}
+            {fullRecStage === "idle" && (
+              <button
+                onClick={handleStartFullRec}
+                className="btn-amber font-mono text-xs"
+                title="Record full continuous interview audio. Groq AI will auto-categorize all answers."
+              >
+                <Mic className="h-4 w-4" /> Start Full Interview Rec
+              </button>
+            )}
+
+            {fullRecStage === "recording" && (
+              <button
+                onClick={handleStopFullRec}
+                className="record-btn recording font-mono text-xs"
+              >
+                <Square className="h-3.5 w-3.5 text-white" /> Stop Full Rec ({formatTimer(fullRecTime)})
+              </button>
+            )}
+
+            {fullRecStage === "processing" && (
+              <button disabled className="record-btn busy font-mono text-xs">
+                Groq AI Auto-Categorizing Interview...
+              </button>
+            )}
+
+            {fullRecStage === "done" && (
+              <button disabled className="record-btn text-[var(--teal)] border-[var(--teal)] bg-[var(--teal-bg)] font-mono text-xs">
+                ✓ Full Interview Saved
+              </button>
+            )}
+
+            <button onClick={onFinishSession} className="finish-btn">
+              Finish interview &amp; save
+            </button>
+          </div>
         </div>
 
         {/* Questions List */}
@@ -115,29 +218,29 @@ export default function SessionView({
                   />
                 </div>
 
-                {/* Takes History */}
+                {/* Takes History with Executive AI Answer Summary */}
                 {takes.length > 0 && (
                   <div className="mt-[10px] pt-[10px] border-t border-dashed border-[var(--line)] flex flex-col gap-[6px]">
                     {takes.map((take) => (
                       <div
                         key={take.id}
-                        className="flex items-center gap-[10px] font-mono text-[11.5px] text-[var(--muted)] flex-wrap"
+                        className="flex items-start gap-[10px] font-mono text-[11.5px] text-[var(--muted)] flex-wrap"
                       >
-                        <span className="text-[var(--text)]">
-                          Take {take.takeNumber} · {take.durationSeconds || 0}s
+                        <span className="text-[var(--text)] font-semibold whitespace-nowrap">
+                          Take {take.takeNumber} ({take.durationSeconds || 0}s):
                         </span>
                         {take.audioUrl && (
                           <a
                             href={take.audioUrl}
                             target="_blank"
                             rel="noopener noreferrer"
-                            className="text-[var(--teal)] hover:underline"
+                            className="text-[var(--teal)] hover:underline whitespace-nowrap"
                           >
                             audio
                           </a>
                         )}
-                        <span className="italic truncate max-w-md">
-                          "{take.transcript || "[No transcript]"}"
+                        <span className="text-[var(--amber)] italic flex-1">
+                          "AI Summary: {take.aiSummary || take.transcript || "[No summary]"}"
                         </span>
                       </div>
                     ))}

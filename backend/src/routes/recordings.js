@@ -81,12 +81,14 @@ module.exports = (prisma) => {
         rawTranscript = "[No verbal transcript recorded]";
       }
 
-      // 3. Optional LLM cleanup pass
+      // 3. Generate AI Answer Summary
+      const targetQuestion = await prisma.question.findUnique({ where: { id: questionId } });
       const settingsList = await prisma.settings.findMany();
       const settingsMap = {};
       settingsList.forEach((s) => (settingsMap[s.key] = s.value));
 
-      const cleanTranscript = await cleanTranscriptWithLLM(rawTranscript, settingsMap);
+      const { summarizeCandidateResponse } = require("../services/llm");
+      const aiSummary = await summarizeCandidateResponse(rawTranscript, targetQuestion?.text || "", settingsMap);
 
       // Deactivate previous takes if new take is primary
       await prisma.recording.updateMany({
@@ -102,7 +104,8 @@ module.exports = (prisma) => {
           takeNumber,
           audioUrl,
           rawTranscript,
-          cleanTranscript,
+          cleanTranscript: rawTranscript,
+          aiSummary: aiSummary || rawTranscript.slice(0, 150),
           durationSec: parseInt(durationSec) || 0,
           notes: notes?.trim() || "",
           isActive: true

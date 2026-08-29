@@ -88,6 +88,39 @@ export async function uploadRecordingTake({ sessionId, questionId, audioBlob, du
   }
 }
 
+export async function uploadFullSessionRecording({ sessionId, audioBlob, durationSec }) {
+  try {
+    const formData = new FormData();
+    formData.append("durationSec", durationSec || 0);
+    if (audioBlob) {
+      formData.append("audio", audioBlob, `full_interview_${Date.now()}.webm`);
+    }
+
+    const res = await fetch(`${API_BASE}/sessions/${sessionId}/full-recording`, {
+      method: "POST",
+      body: formData
+    });
+    return await res.json();
+  } catch (err) {
+    console.error("Upload full session recording error:", err);
+    return null;
+  }
+}
+
+export async function resetDatabase(password) {
+  try {
+    const res = await fetch(`${API_BASE}/settings/reset-database`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ password })
+    });
+    return await res.json();
+  } catch (err) {
+    console.error("Reset database error:", err);
+    return { error: err.message };
+  }
+}
+
 export function getExcelExportUrl(candidateId) {
   return `${API_BASE}/export.xlsx${candidateId ? `?candidateId=${candidateId}` : ""}`;
 }

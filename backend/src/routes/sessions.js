@@ -1,5 +1,27 @@
 const express = require("express");
+const multer = require("multer");
+const path = require("path");
+const fs = require("fs");
+const { uploadAudio } = require("../services/cloudinary");
+const { transcribeAudio } = require("../services/transcription");
+const { parseAndDivideFullInterviewWithLLM } = require("../services/llm");
+
 const router = express.Router();
+
+const uploadsDir = path.join(__dirname, "../../uploads/recordings");
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir, { recursive: true });
+}
+
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => cb(null, uploadsDir),
+  filename: (req, file, cb) => {
+    const ext = path.extname(file.originalname) || ".webm";
+    cb(null, `full_sess_${Date.now()}_${Math.random().toString(36).substring(7)}${ext}`);
+  }
+});
+
+const upload = multer({ storage });
 
 module.exports = (prisma) => {
   // GET all sessions
@@ -55,7 +77,6 @@ module.exports = (prisma) => {
         include: { candidate: true }
       });
 
-      // Update candidate status to in_progress
       await prisma.candidate.update({
         where: { id: candidateId },
         data: { status: "in_progress" }
@@ -63,6 +84,81 @@ module.exports = (prisma) => {
 
       res.status(201).json(session);
     } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // POST upload single continuous full-interview recording
+  router.post("/:id/full-recording", upload.single("audio"), async (req, res) => {
+    try {
+      const sessionId = req.params.id;
+      if (!req.file) return res.status(400).json({ error: "Audio file is required" });
+
+      const filePath = req.file.path;
+
+      // 1. Upload full interview audio to Cloudinary
+      const fullAudioUrl = await uploadAudio(filePath);
+
+      // 2. Transcribe continuous audio with Groq Whisper Large V3 API
+      const fullTranscript = await transcribeAudio(filePath);
+
+      // 3. Fetch questions list & settings
+      const questionsList = await prisma.question.findMany({ orderBy: { createdAt: "asc" } });
+      const settingsList = await prisma.settings.findMany();
+      const settingsMap = {};
+      settingsList.forEach((s) => (settingsMap[s.key] = s.value));
+
+      // 4. Auto-divide & analyze full interview using Groq Llama AI
+      const dividedSections = await parseAndDivideFullInterviewWithLLM(fullTranscript, questionsList, settingsMap);
+
+      // 5. Save full audio URL & transcript on Session row
+      const updatedSession = await prisma.session.update({
+        where: { id: sessionId },
+        data: {
+          fullAudioUrl,
+          fullTranscript,
+          status: "complete"
+        },
+        include: { candidate: true }
+      });
+
+      // 6. Create section recording rows for each auto-partitioned question answer
+      for (const item of dividedSections) {
+        const matchingQ = questionsList.find((q) => q.id === item.questionId || q.text === item.questionText) || questionsList[0];
+        if (matchingQ) {
+          await prisma.recording.create({
+            data: {
+              sessionId,
+              questionId: matchingQ.id,
+              takeNumber: 1,
+              audioUrl: fullAudioUrl,
+              rawTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
+              cleanTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
+              aiSummary: item.aiSummary,
+              keyPoints: item.keyTakeaways,
+              durationSec: parseInt(req.body.durationSec) || 0,
+              isActive: true
+            }
+          });
+        }
+      }
+
+      await prisma.candidate.update({
+        where: { id: updatedSession.candidateId },
+        data: { status: "complete" }
+      });
+
+      const finalSession = await prisma.session.findUnique({
+        where: { id: sessionId },
+        include: {
+          candidate: true,
+          recordings: { include: { question: true } }
+        }
+      });
+
+      res.json(finalSession);
+    } catch (err) {
+      console.error("Full recording processing error:", err);
       res.status(500).json({ error: err.message });
     }
   });

@@ -6,7 +6,7 @@ import QuestionManager from "./components/QuestionManager";
 import SettingsView from "./components/SettingsView";
 import { INITIAL_CANDIDATES, INITIAL_QUESTIONS } from "./utils/initialData";
 import { exportInterviewToExcel } from "./utils/excelExporter";
-import { fetchCandidates, fetchQuestions, createCandidate, createQuestion, createSession, uploadRecordingTake, getExcelExportUrl } from "./services/api";
+import { fetchCandidates, fetchQuestions, createCandidate, createQuestion, createSession, uploadRecordingTake, resetDatabase, getExcelExportUrl } from "./services/api";
 
 export default function App() {
   const [currentUser, setCurrentUser] = useState(() => {
@@ -170,29 +170,34 @@ export default function App() {
 
   // Excel Export
   const handleExportExcel = (candidateParam) => {
-    const candToExport = candidateParam || selectedCandidate || candidates[0];
-    if (!candToExport) return;
+    let exportUrl = getExcelExportUrl();
+    let fileName = `Interview_Transcripts_All_Candidates_${Date.now()}.xlsx`;
 
-    const backendExportUrl = getExcelExportUrl(candToExport.id);
+    if (candidateParam && typeof candidateParam === "object") {
+      exportUrl = getExcelExportUrl(candidateParam.id);
+      fileName = `Interview_Transcript_${candidateParam.name.replace(/\s+/g, "_")}.xlsx`;
+    } else if (selectedCandidate && candidateParam !== "all") {
+      exportUrl = getExcelExportUrl(selectedCandidate.id);
+      fileName = `Interview_Transcript_${selectedCandidate.name.replace(/\s+/g, "_")}.xlsx`;
+    }
+
     const link = document.createElement("a");
-    link.href = backendExportUrl;
-    link.download = `Interview_Transcript_${candToExport.name.replace(/\s+/g, "_")}.xlsx`;
+    link.href = exportUrl;
+    link.download = fileName;
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);
+  };
 
-    const sessionToExport =
-      activeSession?.candidateId === candToExport.id
-        ? activeSession
-        : {
-            id: `SESS-${Date.now().toString().slice(-6)}`,
-            candidateId: candToExport.id,
-            date: new Date().toLocaleDateString(),
-            interviewer: currentUser?.name || "Admin Interviewer",
-            status: candToExport.status
-          };
-
-    exportInterviewToExcel(sessionToExport, candToExport, questions, recordingsMap, candidates);
+  // Reset Database
+  const handleResetDatabase = async (password) => {
+    const res = await resetDatabase(password);
+    if (res && res.success) {
+      setRecordingsMap({});
+      const freshCands = await fetchCandidates();
+      setCandidates(freshCands || []);
+    }
+    return res;
   };
 
   // If not authenticated, render Login Page
@@ -211,6 +216,7 @@ export default function App() {
           onAddCandidate={handleAddCandidate}
           onDeleteCandidate={handleDeleteCandidate}
           onExportExcel={handleExportExcel}
+          onResetDatabase={handleResetDatabase}
           onLogout={handleLogout}
         />
       )}
