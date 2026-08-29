@@ -2,61 +2,89 @@ const fetch = require("node-fetch");
 
 /**
  * Universal LLM Request Helper
- * Automatically routes to Gemini API, Groq Cloud API, or OpenAI/Claude Compatible API
+ * Supports Native Google Gemini REST API, Groq Cloud API, and OpenAI Compatible Endpoints
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
-  let apiKey = settings.llmApiKey || process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || process.env.GROQ_API_KEY || "";
-  let baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/";
-  let model = settings.llmModel || process.env.LLM_MODEL || "gemini-1.5-flash";
+  const geminiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || "";
+  const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
+  const apiKey = settings.llmApiKey || process.env.LLM_API_KEY || geminiKey || groqKey;
 
-  // Auto-detect Google Gemini Key
-  if (apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ")) {
-    baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
-    model = settings.llmModel || process.env.LLM_MODEL || "gemini-1.5-flash";
-  }
+  const isGeminiKey = apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ");
 
-  if (!apiKey && !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1")) {
-    return null;
-  }
+  // 1. TRY NATIVE GOOGLE GEMINI REST API FIRST
+  if (isGeminiKey) {
+    try {
+      console.log("[LLM Service] Calling Google Gemini 1.5 Flash Native API...");
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
 
-  console.log(`[LLM Service] Calling ${model} at ${baseUrl}...`);
+      const response = await fetch(geminiUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: "user",
+              parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
+            }
+          ],
+          generationConfig: {
+            temperature: temperature
+          }
+        })
+      });
 
-  try {
-    const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "Authorization": `Bearer ${apiKey}`
-      },
-      body: JSON.stringify({
-        model: model,
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt }
-        ],
-        temperature: temperature
-      })
-    });
-
-    if (response.ok) {
-      const data = await response.json();
-      return data.choices?.[0]?.message?.content?.trim() || null;
-    } else {
-      const errTxt = await response.text();
-      console.warn(`[LLM Call Error ${response.status}]:`, errTxt);
-
-      // Fallback to llama-3.3-70b-versatile if Gemini key is invalid
-      if (process.env.GROQ_API_KEY && !model.includes("llama")) {
-        console.log("[LLM Fallback] Retrying with Groq Llama 3.3 70B...");
-        return callLLM(systemPrompt, userPrompt, {
-          llmBaseUrl: "https://api.groq.com/openai/v1",
-          llmApiKey: process.env.GROQ_API_KEY,
-          llmModel: "llama-3.3-70b-versatile"
-        }, temperature);
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+        if (text) {
+          console.log("[Gemini Flash Success] Response generated cleanly.");
+          return text;
+        }
+      } else {
+        const errTxt = await response.text();
+        console.warn(`[Gemini API Error ${response.status}]:`, errTxt);
       }
+    } catch (err) {
+      console.warn("[Gemini API Exception]:", err.message);
     }
-  } catch (err) {
-    console.warn("[LLM Call Exception]:", err.message);
+  }
+
+  // 2. FALLBACK TO GROQ CLOUD LLAMA 3.3 70B
+  if (groqKey && groqKey.startsWith("gsk_")) {
+    try {
+      console.log("[LLM Service] Routing to Groq Llama 3.3 70B...");
+      const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
+
+      const response = await fetch(groqUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: "llama-3.3-70b-versatile",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature: temperature
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content?.trim();
+        if (text) {
+          console.log("[Groq Llama 3.3 70B Success] Response generated cleanly.");
+          return text;
+        }
+      } else {
+        const errTxt = await response.text();
+        console.warn(`[Groq API Error ${response.status}]:`, errTxt);
+      }
+    } catch (err) {
+      console.warn("[Groq API Exception]:", err.message);
+    }
   }
 
   return null;
