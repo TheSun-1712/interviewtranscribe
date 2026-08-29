@@ -1,0 +1,22 @@
+# Environment & Secrets
+.env
+*.env
+
+# Dependencies
+node_modules/
+
+# Database Files
+*.db
+*.db-journal
+dev.db
+prisma/dev.db
+
+# Audio Uploads
+uploads/
+uploads/recordings/
+*.webm
+*.wav
+*.mp3
+
+# Logs
+*.log

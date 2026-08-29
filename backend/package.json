@@ -1,0 +1,30 @@
+{
+  "name": "interview-transcriber-backend",
+  "version": "1.0.0",
+  "description": "Express + Prisma SQLite Backend API for Interview Transcriber",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "dev": "node --watch src/index.js",
+    "db:migrate": "prisma migrate dev --name init",
+    "db:push": "prisma db push",
+    "db:generate": "prisma generate"
+  },
+  "dependencies": {
+    "@prisma/client": "^6.4.0",
+    "bcryptjs": "^3.0.2",
+    "cloudinary": "^2.5.1",
+    "cookie-parser": "^1.4.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.7",
+    "exceljs": "^4.4.0",
+    "express": "^4.21.2",
+    "form-data": "^4.0.6",
+    "multer": "^1.4.5-lts.1",
+    "node-fetch": "^2.7.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "prisma": "^6.4.0"
+  }
+}
