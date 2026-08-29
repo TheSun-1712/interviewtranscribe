@@ -142,7 +142,7 @@ Each candidate gets their own individual sheet tab inside the workbook:
   * `Q#`: 1 through 12
   * `Section Category`: Question Category
   * `Question Prompt`: Official question text
-  * `Executive AI Answer Summary`: Crisp 1-2 sentence summary of ONLY candidate answer
+  * `Executive AI Summary`: Crisp 1-2 sentence summary of ONLY candidate answer
   * `Key Insights & Strengths`: Key candidate takeaways
   * `Duration (s)`: Recording duration in seconds
   * `Audio Recording Link`: Clickable Cloudinary link for that question/session
