@@ -1,113 +1,153 @@
-// Initial seed data for Candidates and Pre-decided Questions
+// Official 12-Question Interview Bank and Initial Candidates Seed Data
 
 export const INITIAL_CANDIDATES = [
   {
     id: "cand_1",
     name: "Alex Morgan",
-    role: "Senior Software Engineer",
+    role: "Full Stack Engineer",
     department: "Engineering",
     email: "alex.morgan@techcorp.com",
-    status: "Completed",
-    avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80",
-    dateAdded: "2026-08-25",
-    sessionsCount: 1,
-    notes: "Candidate has 6+ years experience in React, Node, and distributed systems."
+    status: "not_started",
+    dateAdded: "2026-08-30",
+    questionsCount: 0,
+    recordingsCount: 0,
+    notes: "Candidate for technical role."
   },
   {
     id: "cand_2",
     name: "Samantha Vance",
-    role: "Product Design Lead",
-    department: "Design & UX",
+    role: "AI & ML Engineer",
+    department: "AAC Research",
     email: "samantha.vance@designhub.io",
-    status: "In Progress",
-    avatar: "https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80",
-    dateAdded: "2026-08-28",
-    sessionsCount: 1,
-    notes: "Strong portfolio showcasing design system architecture and user research."
+    status: "not_started",
+    dateAdded: "2026-08-30",
+    questionsCount: 0,
+    recordingsCount: 0,
+    notes: "Interested in AI & AAC mentorship."
   },
   {
     id: "cand_3",
     name: "David Chen",
-    role: "AI & ML Specialist",
-    department: "Data Science",
+    role: "Backend Architect",
+    department: "Infrastructure",
     email: "david.chen@ai-labs.org",
-    status: "Pending",
-    avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80",
-    dateAdded: "2026-08-29",
-    sessionsCount: 0,
-    notes: "Specializes in Large Language Models, speech recognition pipelines, and NLP."
+    status: "not_started",
+    dateAdded: "2026-08-30",
+    questionsCount: 0,
+    recordingsCount: 0,
+    notes: "Strong system design background."
   },
   {
     id: "cand_4",
     name: "Priya Sharma",
-    role: "Engineering Manager",
-    department: "Leadership",
+    role: "DevOps & Systems Engineer",
+    department: "Operations",
     email: "priya.sharma@enterprise.com",
-    status: "Pending",
-    avatar: "https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=150&auto=format&fit=crop&q=80",
-    dateAdded: "2026-08-29",
-    sessionsCount: 0,
-    notes: "Extensive background managing cross-functional technical teams."
+    status: "not_started",
+    dateAdded: "2026-08-30",
+    questionsCount: 0,
+    recordingsCount: 0,
+    notes: "Focus on cloud deployment and CI/CD."
   }
 ];
 
 export const QUESTION_CATEGORIES = [
   "Background & Overview",
-  "Technical Competency",
-  "Problem Solving & Architecture",
-  "Culture & Collaboration",
-  "Role-Specific Scenarios",
-  "Wrap-Up & Q&A"
+  "Project & Strategy",
+  "Domain Technical",
+  "Data Structures & Ideation",
+  "Training & Development",
+  "Career Vision & Tech Role",
+  "AAC Focus Area",
+  "Domain Spontaneity",
+  "Logistics & Availability",
+  "Mentorship & Leadership",
+  "Behavioral & Soft Skills"
 ];
 
 export const INITIAL_QUESTIONS = [
   {
     id: "q_1",
     category: "Background & Overview",
-    text: "Can you walk us through your professional journey and highlight your key milestones?",
-    description: "Evaluates career trajectory, communication clarity, and self-awareness.",
+    text: "Name, introduce yourself.",
+    description: "Evaluates candidate background, self-presentation, and general communication clarity.",
     isPreDecided: true
   },
   {
     id: "q_2",
-    category: "Background & Overview",
-    text: "What attracted you to this role and why do you want to join our organization?",
-    description: "Assesses company research, alignment with team mission, and intrinsic motivation.",
+    category: "Project & Strategy",
+    text: "What is your problem statement.",
+    description: "Evaluates problem identification skills, clarity of scope, and core motivation.",
     isPreDecided: true
   },
   {
     id: "q_3",
-    category: "Technical Competency",
-    text: "Describe a complex technical problem you solved recently. What was your approach?",
-    description: "Looks for technical depth, decision-making logic, and handling edge cases.",
+    category: "Project & Strategy",
+    text: "What is your approach/implementation plan to your project?",
+    description: "Assesses architectural roadmap, execution milestones, and technical strategy.",
     isPreDecided: true
   },
   {
     id: "q_4",
-    category: "Technical Competency",
-    text: "How do you maintain quality and reliability when delivering features under tight deadlines?",
-    description: "Evaluates testing strategies, code review processes, and prioritization.",
+    category: "Domain Technical",
+    text: "Basic questions on your domain.",
+    description: "Tests core foundational knowledge and domain competence.",
     isPreDecided: true
   },
   {
     id: "q_5",
-    category: "Problem Solving & Architecture",
-    text: "If you had to redesign a system that is failing under high traffic load, what steps would you take?",
-    description: "Tests system architecture thinking, bottleneck identification, and scalability.",
+    category: "Data Structures & Ideation",
+    text: "Ask a DSA question and basically just know their ideation capabilities.",
+    description: "Evaluates algorithmic thinking, data structure selection, and creative problem-solving.",
     isPreDecided: true
   },
   {
     id: "q_6",
-    category: "Culture & Collaboration",
-    text: "Tell us about a time you had a significant disagreement with a teammate or stakeholder. How did you handle it?",
-    description: "Assesses emotional intelligence, conflict resolution, and communication skills.",
+    category: "Training & Development",
+    text: "What did you understand about training and development?",
+    description: "Gauges learning agility, feedback receptivity, and growth mindset.",
     isPreDecided: true
   },
   {
     id: "q_7",
-    category: "Wrap-Up & Q&A",
-    text: "Do you have any questions for us regarding the team structure, expectations, or upcoming challenges?",
-    description: "Gauges candidate engagement, curiosity, and strategic thinking.",
+    category: "Career Vision & Tech Role",
+    text: "What do you think that YOU would do in tech?",
+    description: "Explores long-term technology vision, career ambitions, and personal passion.",
+    isPreDecided: true
+  },
+  {
+    id: "q_8",
+    category: "AAC Focus Area",
+    text: "What area in AAC that you are most interested in?",
+    description: "Identifies candidate alignment with AAC domains and specialized interest.",
+    isPreDecided: true
+  },
+  {
+    id: "q_9",
+    category: "Domain Spontaneity",
+    text: "Spontaneous question based on candidate domain & background.",
+    description: "Tests on-the-spot thinking, adaptability, and domain depth.",
+    isPreDecided: true
+  },
+  {
+    id: "q_10",
+    category: "Logistics & Availability",
+    text: "Are you able to stay after hours when required for project delivery?",
+    description: "Confirms flexibility, time commitment, and availability.",
+    isPreDecided: true
+  },
+  {
+    id: "q_11",
+    category: "Mentorship & Leadership",
+    text: "Are you interested in becoming a mentor to junior team members?",
+    description: "Gauges leadership potential, knowledge-sharing eagerness, and team impact.",
+    isPreDecided: true
+  },
+  {
+    id: "q_12",
+    category: "Behavioral & Soft Skills",
+    text: "Behavioural question: Describe a challenging situation and how you navigated it.",
+    description: "Evaluates emotional intelligence, resilience, conflict resolution, and teamwork.",
     isPreDecided: true
   }
 ];

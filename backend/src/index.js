@@ -45,33 +45,39 @@ app.use("/api/recordings", recordingsRouter(prisma));
 app.use("/api/settings", settingsRouter(prisma));
 app.use("/api/export.xlsx", exportRouter(prisma));
 
-// Seed initial database defaults if empty
+// Official 12-Question Interview Bank Seed
+const OFFICIAL_QUESTIONS = [
+  { category: "Background & Overview", text: "Name, introduce yourself.", isCustom: false },
+  { category: "Project & Strategy", text: "What is your problem statement.", isCustom: false },
+  { category: "Project & Strategy", text: "What is your approach/implementation plan to your project?", isCustom: false },
+  { category: "Domain Technical", text: "Basic questions on your domain.", isCustom: false },
+  { category: "Data Structures & Ideation", text: "Ask a DSA question and basically just know their ideation capabilities.", isCustom: false },
+  { category: "Training & Development", text: "What did you understand about training and development?", isCustom: false },
+  { category: "Career Vision & Tech Role", text: "What do you think that YOU would do in tech?", isCustom: false },
+  { category: "AAC Focus Area", text: "What area in AAC that you are most interested in?", isCustom: false },
+  { category: "Domain Spontaneity", text: "Spontaneous question based on candidate domain & background.", isCustom: false },
+  { category: "Logistics & Availability", text: "Are you able to stay after hours when required for project delivery?", isCustom: false },
+  { category: "Mentorship & Leadership", text: "Are you interested in becoming a mentor to junior team members?", isCustom: false },
+  { category: "Behavioral & Soft Skills", text: "Behavioural question: Describe a challenging situation and how you navigated it.", isCustom: false }
+];
+
 async function seedDatabase() {
   try {
     const qCount = await prisma.question.count();
     if (qCount === 0) {
-      console.log("Seeding pre-decided questions into SQLite database...");
-      await prisma.question.createMany({
-        data: [
-          { category: "Background & Overview", text: "Can you walk us through your professional journey and highlight key milestones?", isCustom: false },
-          { category: "Background & Overview", text: "What attracted you to this role and why do you want to join our organization?", isCustom: false },
-          { category: "Technical Competency", text: "Describe a complex technical problem you solved recently. What was your approach?", isCustom: false },
-          { category: "Technical Competency", text: "How do you maintain quality and reliability when delivering features under tight deadlines?", isCustom: false },
-          { category: "Problem Solving & Architecture", text: "If you had to redesign a system failing under high traffic load, what steps would you take?", isCustom: false },
-          { category: "Culture & Collaboration", text: "Tell us about a time you had a significant disagreement with a teammate. How did you handle it?", isCustom: false },
-          { category: "Wrap-Up & Q&A", text: "Do you have any questions for us regarding the team structure or upcoming challenges?", isCustom: false }
-        ]
-      });
+      console.log("Seeding official 12-question interview bank into PostgreSQL...");
+      await prisma.question.createMany({ data: OFFICIAL_QUESTIONS });
     }
 
     const cCount = await prisma.candidate.count();
     if (cCount === 0) {
-      console.log("Seeding starter candidate profiles into SQLite database...");
+      console.log("Seeding fresh candidate profiles into PostgreSQL...");
       await prisma.candidate.createMany({
         data: [
-          { name: "Alex Morgan", role: "Senior Software Engineer", department: "Engineering", email: "alex.morgan@techcorp.com", status: "completed", notes: "Strong 6+ years React & Node experience" },
-          { name: "Samantha Vance", role: "Product Design Lead", department: "Design & UX", email: "samantha.vance@designhub.io", status: "in_progress", notes: "Portfolio showcasing design system architecture" },
-          { name: "David Chen", role: "AI & ML Specialist", department: "Data Science", email: "david.chen@ai-labs.org", status: "not_started", notes: "Specializes in LLMs, speech recognition & NLP" }
+          { name: "Alex Morgan", role: "Full Stack Engineer", department: "Engineering", email: "alex.morgan@techcorp.com", status: "not_started" },
+          { name: "Samantha Vance", role: "AI & ML Engineer", department: "AAC Research", email: "samantha.vance@designhub.io", status: "not_started" },
+          { name: "David Chen", role: "Backend Architect", department: "Infrastructure", email: "david.chen@ai-labs.org", status: "not_started" },
+          { name: "Priya Sharma", role: "DevOps & Systems Engineer", department: "Operations", email: "priya.sharma@enterprise.com", status: "not_started" }
         ]
       });
     }
