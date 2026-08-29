@@ -5,19 +5,21 @@ const fetch = require("node-fetch");
  * Automatically routes to Gemini API, Groq Cloud API, or OpenAI/Claude Compatible API
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
-  let baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
-  let apiKey = settings.llmApiKey || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || "";
-  let model = settings.llmModel || process.env.LLM_MODEL || "llama-3.3-70b-versatile";
+  let apiKey = settings.llmApiKey || process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || process.env.GROQ_API_KEY || "";
+  let baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://generativelanguage.googleapis.com/v1beta/openai/";
+  let model = settings.llmModel || process.env.LLM_MODEL || "gemini-1.5-flash";
 
   // Auto-detect Google Gemini Key
-  if (apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.")) {
+  if (apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ")) {
     baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
-    model = settings.llmModel || "gemini-1.5-flash";
+    model = settings.llmModel || process.env.LLM_MODEL || "gemini-1.5-flash";
   }
 
   if (!apiKey && !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1")) {
     return null;
   }
+
+  console.log(`[LLM Service] Calling ${model} at ${baseUrl}...`);
 
   try {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/chat/completions`, {
@@ -43,10 +45,14 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
       const errTxt = await response.text();
       console.warn(`[LLM Call Error ${response.status}]:`, errTxt);
 
-      // Fallback strategies
-      if (apiKey.startsWith("gsk_") && model.includes("70b")) {
-        console.log("[LLM Fallback] Retrying Groq with llama-3.1-8b-instant...");
-        return callLLM(systemPrompt, userPrompt, { ...settings, llmModel: "llama-3.1-8b-instant" }, temperature);
+      // Fallback to llama-3.3-70b-versatile if Gemini key is invalid
+      if (process.env.GROQ_API_KEY && !model.includes("llama")) {
+        console.log("[LLM Fallback] Retrying with Groq Llama 3.3 70B...");
+        return callLLM(systemPrompt, userPrompt, {
+          llmBaseUrl: "https://api.groq.com/openai/v1",
+          llmApiKey: process.env.GROQ_API_KEY,
+          llmModel: "llama-3.3-70b-versatile"
+        }, temperature);
       }
     }
   } catch (err) {
