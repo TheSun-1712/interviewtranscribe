@@ -10,7 +10,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
   let model = settings.llmModel || process.env.LLM_MODEL || "llama-3.3-70b-versatile";
 
   // Auto-detect Google Gemini Key
-  if (apiKey.startsWith("AIzaSy")) {
+  if (apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.")) {
     baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
     model = settings.llmModel || "gemini-1.5-flash";
   }
