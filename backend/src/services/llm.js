@@ -1,12 +1,19 @@
 const fetch = require("node-fetch");
 
 /**
- * Helper to execute LLM Chat Completion requests (Groq or OpenAI)
+ * Universal LLM Request Helper
+ * Automatically routes to Gemini API, Groq Cloud API, or OpenAI/Claude Compatible API
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
-  const baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
-  const apiKey = settings.llmApiKey || process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
-  const model = settings.llmModel || process.env.LLM_MODEL || "llama-3.3-70b-versatile";
+  let baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
+  let apiKey = settings.llmApiKey || process.env.GROQ_API_KEY || process.env.GEMINI_API_KEY || process.env.LLM_API_KEY || "";
+  let model = settings.llmModel || process.env.LLM_MODEL || "llama-3.3-70b-versatile";
+
+  // Auto-detect Google Gemini Key
+  if (apiKey.startsWith("AIzaSy")) {
+    baseUrl = "https://generativelanguage.googleapis.com/v1beta/openai/";
+    model = settings.llmModel || "gemini-1.5-flash";
+  }
 
   if (!apiKey && !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1")) {
     return null;
@@ -36,9 +43,9 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
       const errTxt = await response.text();
       console.warn(`[LLM Call Error ${response.status}]:`, errTxt);
 
-      // If llama-3.3-70b-versatile fails, fallback to llama-3.1-8b-instant
-      if (model.includes("70b")) {
-        console.log("[LLM Fallback] Retrying with llama-3.1-8b-instant...");
+      // Fallback strategies
+      if (apiKey.startsWith("gsk_") && model.includes("70b")) {
+        console.log("[LLM Fallback] Retrying Groq with llama-3.1-8b-instant...");
         return callLLM(systemPrompt, userPrompt, { ...settings, llmModel: "llama-3.1-8b-instant" }, temperature);
       }
     }
@@ -50,25 +57,25 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
 }
 
 /**
- * PASS 1: Diarize continuous transcript into speaker roles [INTERVIEWER] vs [CANDIDATE]
+ * PASS 1: Speaker Diarization ([INTERVIEWER] vs [CANDIDATE])
  */
 async function diarizeAndCleanTranscript(rawTranscript, settings = {}) {
   if (!rawTranscript || !rawTranscript.trim()) return "";
 
-  const systemPrompt = `You are a high-accuracy interview speaker diarization AI.
-You are given a raw continuous audio transcript of an interview containing two speakers: the Interviewer and the Candidate.
+  const systemPrompt = `You are an expert interview speaker diarization AI.
+You are given a raw continuous transcript of an interview containing two speakers: the Interviewer (asking questions) and the Candidate (answering).
 
 TASK:
-Rewrite the transcript as a structured conversation separating the Interviewer questions from the Candidate answers.
+Rewrite the transcript into a structured conversation script separating Interviewer questions from Candidate answers.
 
 FORMAT:
 [INTERVIEWER]: <Interviewer question or prompt>
 [CANDIDATE]: <Candidate spoken response>
 
 RULES:
-1. Label any question, prompt, or interviewer intro (e.g., 'tell me your name', 'what is your problem statement', 'next question', 'how are you planning...') as [INTERVIEWER].
-2. Label any candidate statements, answers, explanations, or background info as [CANDIDATE].
-3. Clean up speech stutters, but keep the exact factual statements intact.`;
+1. Label any question, prompt, or interviewer intro (e.g. 'tell me your name', 'what is your problem statement', 'next question', 'how do you plan...') as [INTERVIEWER].
+2. Label any candidate statements, background, or explanations as [CANDIDATE].
+3. Clean up speech stutters, but preserve exact factual statements.`;
 
   const userPrompt = `Raw Continuous Interview Transcript:\n"${rawTranscript}"\n\nDiarized Conversation Script:`;
   const result = await callLLM(systemPrompt, userPrompt, settings, 0.1);
@@ -108,7 +115,7 @@ Analyze the provided transcript segment and write a concise 1 to 2 sentence exec
 RULES:
 1. Summarize candidate's core skills, experience, project approach, or background.
 2. DO NOT mention or quote the interviewer's question.
-3. DO NOT start with filler like 'The candidate states that...'. Write direct executive summary.`;
+3. Write a direct executive summary.`;
 
   const userPrompt = `Target Question: "${questionText}"\n\nTranscript Segment:\n"${rawTranscript}"\n\nConcise Executive AI Summary:`;
   const summary = await callLLM(systemPrompt, userPrompt, settings, 0.2);
