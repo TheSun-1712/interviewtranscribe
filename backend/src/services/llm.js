@@ -1,8 +1,10 @@
 const fetch = require("node-fetch");
 
 /**
- * Universal LLM Request Helper
- * Supports Native Google Gemini REST API, Groq Cloud API, and OpenAI Compatible Endpoints
+ * Universal LLM Request Helper — Option A Multi-Tier Cloud API Engine
+ * Tier 1: Google Gemini 1.5 Flash (gemini-1.5-flash-latest)
+ * Tier 2: Groq Llama 3.1 Instant (llama-3.1-8b-instant)
+ * Tier 3: Groq Mixtral 8x7B (mixtral-8x7b-32768)
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
   const geminiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || "";
@@ -11,11 +13,13 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
 
   const isGeminiKey = apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ");
 
-  // 1. TRY NATIVE GOOGLE GEMINI REST API FIRST
+  // -------------------------------------------------------------
+  // TIER 1: GOOGLE GEMINI 1.5 FLASH LATEST
+  // -------------------------------------------------------------
   if (isGeminiKey) {
     try {
-      console.log("[LLM Service] Calling Google Gemini 1.5 Flash Native API...");
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`;
+      console.log("[LLM Service] Tier 1: Calling Google Gemini (gemini-1.5-flash-latest)...");
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
 
       const response = await fetch(geminiUrl, {
         method: "POST",
@@ -37,7 +41,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (text) {
-          console.log("[Gemini Flash Success] Response generated cleanly.");
+          console.log("[Gemini 1.5 Flash Latest Success] Generated output cleanly.");
           return text;
         }
       } else {
@@ -49,10 +53,12 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
     }
   }
 
-  // 2. FALLBACK TO GROQ CLOUD LLAMA 3.3 70B
+  // -------------------------------------------------------------
+  // TIER 2: GROQ CLOUD LLAMA 3.1 8B INSTANT
+  // -------------------------------------------------------------
   if (groqKey && groqKey.startsWith("gsk_")) {
     try {
-      console.log("[LLM Service] Routing to Groq Llama 3.3 70B...");
+      console.log("[LLM Service] Tier 2: Calling Groq (llama-3.1-8b-instant)...");
       const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
 
       const response = await fetch(groqUrl, {
@@ -62,7 +68,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
           "Authorization": `Bearer ${groqKey}`
         },
         body: JSON.stringify({
-          model: "llama-3.3-70b-versatile",
+          model: "llama-3.1-8b-instant",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt }
@@ -75,15 +81,48 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content?.trim();
         if (text) {
-          console.log("[Groq Llama 3.3 70B Success] Response generated cleanly.");
+          console.log("[Groq Llama 3.1 Instant Success] Generated output cleanly.");
           return text;
         }
       } else {
         const errTxt = await response.text();
-        console.warn(`[Groq API Error ${response.status}]:`, errTxt);
+        console.warn(`[Groq Llama 3.1 Error ${response.status}]:`, errTxt);
       }
     } catch (err) {
-      console.warn("[Groq API Exception]:", err.message);
+      console.warn("[Groq Llama 3.1 Exception]:", err.message);
+    }
+
+    // -------------------------------------------------------------
+    // TIER 3: GROQ MIXTRAL 8X7B FALLBACK
+    // -------------------------------------------------------------
+    try {
+      console.log("[LLM Service] Tier 3: Retrying Groq (mixtral-8x7b-32768)...");
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: "mixtral-8x7b-32768",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature: temperature
+        })
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content?.trim();
+        if (text) {
+          console.log("[Groq Mixtral 8x7B Success] Generated output cleanly.");
+          return text;
+        }
+      }
+    } catch (err) {
+      console.warn("[Groq Mixtral Exception]:", err.message);
     }
   }
 
@@ -180,9 +219,73 @@ async function divideAndCategorizeInterviewWithLLM(QandAList, settings = {}) {
 }
 
 /**
+ * TIER 4 HEURISTIC RULE-BASED SEGMENTER (Guaranteed Safety Net)
+ * Smart keyword & question prompt matcher for offline/fallback scenarios
+ */
+function heuristicSegmentTranscript(transcriptText, questionsList = []) {
+  if (!transcriptText || !transcriptText.trim()) return [];
+
+  const text = transcriptText.trim();
+
+  // Question keyword mapping
+  const KEYWORD_MAP = [
+    { id: 1, keywords: ["name", "introduce", "myself", "i am", "my name is"] },
+    { id: 2, keywords: ["problem statement", "problem is", "aim is", "building a"] },
+    { id: 3, keywords: ["approach", "implementation plan", "implement", "using a", "unet", "resnet", "gan"] },
+    { id: 4, keywords: ["domain", "basic questions", "field"] },
+    { id: 5, keywords: ["dsa", "data structure", "algorithm", "array", "tree"] },
+    { id: 6, keywords: ["training and development", "training", "development"] },
+    { id: 7, keywords: ["in tech", "you do in tech", "career"] },
+    { id: 8, keywords: ["aac", "aac area", "interested in aac"] },
+    { id: 9, keywords: ["spontaneous", "spontaneity"] },
+    { id: 10, keywords: ["stay after hours", "after hours", "overtime", "extra hours"] },
+    { id: 11, keywords: ["mentor", "mentorship", "junior"] },
+    { id: 12, keywords: ["behavioural", "behavioral", "challenge", "navigated"] }
+  ];
+
+  return questionsList.map((q, idx) => {
+    const qNum = idx + 1;
+    const rule = KEYWORD_MAP.find((r) => r.id === qNum) || { keywords: [q.text.toLowerCase()] };
+
+    // Find matching sentences
+    const sentences = text.split(/(?<=[.?!])\s+/);
+    const matchedSentences = sentences.filter((s) => {
+      const lower = s.toLowerCase();
+      // Exclude interviewer intro sentences
+      if (lower.startsWith("can you") || lower.startsWith("what is") || lower.startsWith("next question") || lower.endsWith("?")) {
+        return false;
+      }
+      return rule.keywords.some((kw) => lower.includes(kw));
+    });
+
+    if (matchedSentences.length > 0 || idx === 0) {
+      const candidateAns = matchedSentences.length > 0 ? matchedSentences.join(" ") : sentences.slice(0, 3).join(" ");
+      return {
+        questionId: q.id,
+        category: q.category || "General",
+        questionText: q.text,
+        aiSummary: candidateAns.slice(0, 150) + "...",
+        keyTakeaways: "Candidate response recorded.",
+        candidateAnswerOnly: candidateAns
+      };
+    }
+
+    return {
+      questionId: q.id,
+      category: q.category || "General",
+      questionText: q.text,
+      aiSummary: "Question not asked in session",
+      keyTakeaways: "N/A",
+      candidateAnswerOnly: "[Not answered in this session]"
+    };
+  });
+}
+
+/**
  * TWO-PASS Full Continuous Interview Analyzer:
  * Pass 1: Speaker Diarization ([INTERVIEWER] vs [CANDIDATE]).
  * Pass 2: Question-by-Question Section Segmenter & Executive Summarizer.
+ * Fallback: Tier 4 Heuristic Segmenter.
  */
 async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsList = [], settings = {}) {
   if (!fullTranscriptText || !fullTranscriptText.trim()) {
@@ -294,33 +397,8 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
     }
   }
 
-  // Safe Fallback: Process each candidate segment independently
-  const candidateBlocks = diarizedScript.split("[INTERVIEWER]:").filter(Boolean);
-
-  return questionsList.map((q, idx) => {
-    const block = candidateBlocks[idx + 1] || candidateBlocks[idx];
-    if (block && block.includes("[CANDIDATE]:")) {
-      const candText = block.split("[CANDIDATE]:")[1]?.trim() || block.trim();
-      if (candText.length > 5) {
-        return {
-          questionId: q.id,
-          category: q.category || "General",
-          questionText: q.text,
-          aiSummary: candText.slice(0, 150) + "...",
-          keyTakeaways: "Candidate answer recorded.",
-          candidateAnswerOnly: candText
-        };
-      }
-    }
-    return {
-      questionId: q.id,
-      category: q.category || "General",
-      questionText: q.text,
-      aiSummary: "Question not asked in session",
-      keyTakeaways: "N/A",
-      candidateAnswerOnly: "[Not answered in this session]"
-    };
-  });
+  console.log("[LLM Pipeline] Executing Tier 4 Heuristic Rule Segmenter Safety Net...");
+  return heuristicSegmentTranscript(fullTranscriptText, questionsList);
 }
 
 module.exports = {
