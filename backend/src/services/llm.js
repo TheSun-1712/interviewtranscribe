@@ -77,7 +77,6 @@ async function cleanTranscriptWithLLM(rawTranscript, settings = {}) {
 
   const diarized = await diarizeAndCleanTranscript(rawTranscript, settings);
 
-  // Extract candidate lines
   const candidateLines = diarized
     .split("\n")
     .filter((line) => line.startsWith("[CANDIDATE]:"))
@@ -155,33 +154,33 @@ async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsL
   console.log("[LLM Pipeline] Step 1 Diarized Script:\n", diarizedScript.slice(0, 300) + "...");
 
   const questionTemplates = questionsList.map((q, idx) => ({
-    qIndex: idx + 1,
+    qNumber: idx + 1,
     questionId: q.id,
     questionText: q.text,
     category: q.category || "General"
   }));
 
   const systemPrompt = `You are a senior executive interview analysis AI.
-You are given a Diarized Interview Script containing [INTERVIEWER] and [CANDIDATE] lines, along with a list of 12 Expected Questions.
+You are given a Diarized Interview Script containing [INTERVIEWER] and [CANDIDATE] lines, along with a list of Expected Questions (1 to 12).
 
 TASK:
-For each expected question (1 to 12):
-1. Locate the candidate's answer under [CANDIDATE] in the script.
-2. If the candidate answered this question:
+For each expected question:
+1. Search the Diarized Script for the candidate's spoken response to that question.
+2. If the candidate answered that question:
    - 'wasAnswered': true
-   - 'candidateAnswerOnly': Clean candidate answer statements ONLY (strictly exclude all [INTERVIEWER] lines/questions).
-   - 'aiSummary': Write a crisp, executive 1 to 2 sentence summary of ONLY the candidate's core answer.
-   - 'keyTakeaways': 2 key strengths bullet points.
-3. If the candidate DID NOT answer or discuss this question in the audio script:
+   - 'candidateAnswerOnly': Clean candidate spoken response (strictly exclude all [INTERVIEWER] lines/questions).
+   - 'aiSummary': Executive 1 to 2 sentence summary of ONLY the candidate's core answer.
+   - 'keyTakeaways': 2 key strengths.
+3. If the candidate DID NOT answer or discuss that question:
    - 'wasAnswered': false
    - 'candidateAnswerOnly': "[Not answered in this session]"
    - 'aiSummary': "Question not asked in session"
    - 'keyTakeaways': "N/A"
 
-STRICT RULE: Do NOT copy the same answer to multiple questions. If a question was not answered, set wasAnswered: false.
+STRICT RULE: Do NOT copy the same answer to multiple questions.
 
 Return ONLY a JSON array of objects for all 12 questions with keys:
-- qIndex (number 1 to 12)
+- qNumber (number 1 to 12)
 - questionId (string matching provided questionId)
 - category (string)
 - questionText (string)
@@ -190,7 +189,7 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
 - candidateAnswerOnly (string)
 - wasAnswered (boolean)`;
 
-  const userPrompt = `Expected 12 Questions:\n${JSON.stringify(questionTemplates, null, 2)}\n\nDiarized Interview Script:\n"${diarizedScript}"`;
+  const userPrompt = `Expected Questions List:\n${JSON.stringify(questionTemplates, null, 2)}\n\nDiarized Interview Script:\n"${diarizedScript}"`;
 
   console.log("[LLM Pipeline] Step 2: Running Section Segmenter & Executive Summarizer...");
   const jsonResponseText = await callLLM(systemPrompt, userPrompt, settings, 0.1);
@@ -200,17 +199,36 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
     if (jsonMatch) {
       try {
         const parsedArray = JSON.parse(jsonMatch[0]);
+        console.log("[LLM Pipeline] Step 2 Parsed Array Count:", parsedArray.length);
 
         return questionsList.map((q, idx) => {
-          const matched = parsedArray.find((p) => p.questionId === q.id || p.qIndex === idx + 1 || p.questionText === q.text);
-          if (matched && matched.wasAnswered && matched.candidateAnswerOnly && !matched.candidateAnswerOnly.includes("[Not answered")) {
+          const qNum = idx + 1;
+          const matched = parsedArray.find(
+            (p) =>
+              Number(p.qNumber) === qNum ||
+              p.questionId === q.id ||
+              (p.questionText && p.questionText.toLowerCase().includes(q.text.toLowerCase().slice(0, 15)))
+          );
+
+          const isAnswered =
+            matched &&
+            (matched.wasAnswered === true ||
+              String(matched.wasAnswered).toLowerCase() === "true" ||
+              String(matched.wasAnswered).toLowerCase() === "yes") &&
+            matched.candidateAnswerOnly &&
+            !matched.candidateAnswerOnly.toLowerCase().includes("not answered") &&
+            !matched.candidateAnswerOnly.toLowerCase().includes("n/a") &&
+            matched.candidateAnswerOnly.trim().length > 5;
+
+          if (isAnswered) {
+            const cleanCand = matched.candidateAnswerOnly.replace(/^\[CANDIDATE\]:\s*/i, "").trim();
             return {
               questionId: q.id,
               category: matched.category || q.category || "General",
               questionText: q.text,
               aiSummary: matched.aiSummary || "Candidate response summarized.",
               keyTakeaways: matched.keyTakeaways || "Response recorded.",
-              candidateAnswerOnly: matched.candidateAnswerOnly.replace(/^\[CANDIDATE\]:\s*/i, "").trim()
+              candidateAnswerOnly: cleanCand
             };
           } else {
             return {
@@ -230,22 +248,22 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
   }
 
   // Safe Fallback: Process each candidate segment independently
-  const candidateBlocks = diarizedScript
-    .split("[INTERVIEWER]:")
-    .filter(Boolean);
+  const candidateBlocks = diarizedScript.split("[INTERVIEWER]:").filter(Boolean);
 
   return questionsList.map((q, idx) => {
-    const block = candidateBlocks[idx];
+    const block = candidateBlocks[idx + 1] || candidateBlocks[idx];
     if (block && block.includes("[CANDIDATE]:")) {
       const candText = block.split("[CANDIDATE]:")[1]?.trim() || block.trim();
-      return {
-        questionId: q.id,
-        category: q.category || "General",
-        questionText: q.text,
-        aiSummary: candText.slice(0, 150) + "...",
-        keyTakeaways: "Candidate answer recorded.",
-        candidateAnswerOnly: candText
-      };
+      if (candText.length > 5) {
+        return {
+          questionId: q.id,
+          category: q.category || "General",
+          questionText: q.text,
+          aiSummary: candText.slice(0, 150) + "...",
+          keyTakeaways: "Candidate answer recorded.",
+          candidateAnswerOnly: candText
+        };
+      }
     }
     return {
       questionId: q.id,
