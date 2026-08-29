@@ -1,0 +1,144 @@
+@import "tailwindcss" source(none);
+@source "../src";
+@import "tw-animate-css";
+
+/*
+ * Interview Transcriber Studio — "Studio Desk Calm" design system.
+ * Every color / font / motion value lives here as a semantic token.
+ */
+
+@theme inline {
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  --radius-2xl: calc(var(--radius) + 8px);
+  --radius-3xl: calc(var(--radius) + 12px);
+
+  --font-display: "Fraunces", ui-serif, Georgia, serif;
+  --font-mono: "JetBrains Mono", ui-monospace, monospace;
+  --font-sans: "JetBrains Mono", ui-monospace, monospace;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-panel2: var(--panel-2);
+  --color-ink: var(--ink);
+  --color-inkmuted: var(--ink-muted);
+  --color-line: var(--line);
+  --color-signal: var(--signal);
+  --color-signal-soft: var(--signal-soft);
+  --color-live: var(--live);
+  --color-amber: var(--amber);
+  --color-amber-soft: var(--amber-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+
+  /* shadcn compatibility aliases */
+  --color-card: var(--panel);
+  --color-card-foreground: var(--ink);
+  --color-popover: var(--panel);
+  --color-popover-foreground: var(--ink);
+  --color-primary: var(--signal);
+  --color-primary-foreground: var(--background);
+  --color-secondary: var(--panel-2);
+  --color-secondary-foreground: var(--ink);
+  --color-muted: var(--panel-2);
+  --color-muted-foreground: var(--ink-muted);
+  --color-accent: var(--signal-soft);
+  --color-accent-foreground: var(--signal);
+  --color-destructive: var(--danger);
+  --color-destructive-foreground: var(--background);
+  --color-border: var(--line);
+  --color-input: var(--line);
+  --color-ring: var(--signal);
+  --color-ring-offset-background: var(--background);
+
+  --ease-desk: cubic-bezier(0.32, 0.72, 0, 1);
+  --animate-rise: rise 0.55s cubic-bezier(0.32, 0.72, 0, 1) both;
+  --animate-grow: grow 0.8s cubic-bezier(0.32, 0.72, 0, 1) 0.15s both;
+  --animate-ring: ring 1.6s ease-in-out infinite;
+  --animate-meter: meter 1s ease-in-out infinite;
+}
+
+:root {
+  --radius: 0.75rem;
+  --background: hsl(170 12% 9%);
+  --foreground: hsl(150 18% 90%);
+  --panel: hsl(168 12% 12%);
+  --panel-2: hsl(168 11% 16%);
+  --ink: hsl(150 18% 90%);
+  --ink-muted: hsl(160 10% 58%);
+  --line: hsl(150 14% 90% / 0.09);
+  --signal: hsl(152 45% 55%);
+  --signal-soft: hsl(152 30% 20%);
+  --live: hsl(152 65% 52%);
+  --amber: hsl(38 80% 58%);
+  --amber-soft: hsl(36 45% 22%);
+  --danger: hsl(6 68% 60%);
+  --danger-soft: hsl(8 45% 22%);
+}
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes grow {
+  from {
+    width: 0;
+  }
+}
+
+@keyframes ring {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 hsl(152 65% 52% / 0.4);
+  }
+  50% {
+    box-shadow: 0 0 0 7px hsl(152 65% 52% / 0);
+  }
+}
+
+@keyframes meter {
+  0%,
+  100% {
+    transform: scaleY(0.35);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+
+@utility mono {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+
+@utility display {
+  font-family: var(--font-display);
+  letter-spacing: -0.01em;
+}
+
+@layer base {
+  * {
+    border-color: var(--line);
+  }
+
+  body {
+    background-color: var(--background);
+    color: var(--ink);
+    font-family: var(--font-mono);
+    -webkit-font-smoothing: antialiased;
+  }
+
+  ::selection {
+    background: var(--signal-soft);
+  }
+}
