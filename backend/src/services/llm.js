@@ -2,7 +2,7 @@ const fetch = require("node-fetch");
 
 /**
  * Universal LLM Request Helper — Live Model IDs Verified
- * Tier 1: Google Gemini 2.5 Flash (models/gemini-2.5-flash or models/gemini-flash-latest)
+ * Tier 1: Google Gemini Flash Latest (gemini-flash-latest) — Status 200 Verified
  * Tier 2: Groq Cloud GPT-OSS (openai/gpt-oss-20b)
  * Tier 3: Heuristic Rule Segmenter
  */
@@ -14,12 +14,12 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
   const isGeminiKey = apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ");
 
   // -------------------------------------------------------------
-  // TIER 1: GOOGLE GEMINI 2.5 FLASH / GEMINI-FLASH-LATEST
+  // TIER 1: GOOGLE GEMINI FLASH LATEST (VERIFIED 200 OK)
   // -------------------------------------------------------------
   if (isGeminiKey) {
     try {
-      console.log("[LLM Service] Tier 1: Calling Google Gemini 2.5 Flash (models/gemini-2.5-flash)...");
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
+      console.log("[LLM Service] Tier 1: Calling Google Gemini Flash (gemini-flash-latest)...");
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
 
       const response = await fetch(geminiUrl, {
         method: "POST",
@@ -41,32 +41,12 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (text) {
-          console.log("[Gemini 2.5 Flash Success] Generated output cleanly.");
+          console.log("[Gemini Flash Success] Output generated cleanly.");
           return text;
         }
       } else {
         const errTxt = await response.text();
         console.warn(`[Gemini API Error ${response.status}]:`, errTxt);
-
-        // Fallback to models/gemini-flash-latest alias
-        console.log("[LLM Fallback] Retrying Gemini with models/gemini-flash-latest...");
-        const retryUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
-        const retryRes = await fetch(retryUrl, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
-            generationConfig: { temperature }
-          })
-        });
-        if (retryRes.ok) {
-          const retryData = await retryRes.json();
-          const retryText = retryData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-          if (retryText) {
-            console.log("[Gemini Flash-Latest Success] Generated output cleanly.");
-            return retryText;
-          }
-        }
       }
     } catch (err) {
       console.warn("[Gemini API Exception]:", err.message);
@@ -99,7 +79,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content?.trim();
         if (text) {
-          console.log("[Groq GPT-OSS-20B Success] Generated output cleanly.");
+          console.log("[Groq GPT-OSS-20B Success] Output generated cleanly.");
           return text;
         }
       } else {
