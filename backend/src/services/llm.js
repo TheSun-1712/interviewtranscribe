@@ -6,7 +6,7 @@ const fetch = require("node-fetch");
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
   const baseUrl = settings.llmBaseUrl || process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1";
   const apiKey = settings.llmApiKey || process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
-  const model = settings.llmModel || process.env.LLM_MODEL || "llama3-70b-8192";
+  const model = settings.llmModel || process.env.LLM_MODEL || "llama-3.3-70b-versatile";
 
   if (!apiKey && !baseUrl.includes("localhost") && !baseUrl.includes("127.0.0.1")) {
     return null;
@@ -35,6 +35,12 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
     } else {
       const errTxt = await response.text();
       console.warn(`[LLM Call Error ${response.status}]:`, errTxt);
+
+      // If llama-3.3-70b-versatile fails, fallback to llama-3.1-8b-instant
+      if (model.includes("70b")) {
+        console.log("[LLM Fallback] Retrying with llama-3.1-8b-instant...");
+        return callLLM(systemPrompt, userPrompt, { ...settings, llmModel: "llama-3.1-8b-instant" }, temperature);
+      }
     }
   } catch (err) {
     console.warn("[LLM Call Exception]:", err.message);
