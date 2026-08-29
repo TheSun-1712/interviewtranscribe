@@ -1,25 +1,25 @@
 const fetch = require("node-fetch");
 
 /**
- * Universal LLM Request Helper — Option A Multi-Tier Cloud API Engine
- * Tier 1: Google Gemini 1.5 Flash (gemini-1.5-flash-latest)
- * Tier 2: Groq Llama 3.1 Instant (llama-3.1-8b-instant)
- * Tier 3: Groq Mixtral 8x7B (mixtral-8x7b-32768)
+ * Universal LLM Request Helper — Live Model IDs Verified
+ * Tier 1: Google Gemini 2.5 Flash (models/gemini-2.5-flash or models/gemini-flash-latest)
+ * Tier 2: Groq Cloud GPT-OSS (openai/gpt-oss-20b)
+ * Tier 3: Heuristic Rule Segmenter
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
   const geminiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || "";
-  const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || process.env.LLM_API_KEY || "";
+  const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || "";
   const apiKey = settings.llmApiKey || process.env.LLM_API_KEY || geminiKey || groqKey;
 
   const isGeminiKey = apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ");
 
   // -------------------------------------------------------------
-  // TIER 1: GOOGLE GEMINI 1.5 FLASH LATEST
+  // TIER 1: GOOGLE GEMINI 2.5 FLASH / GEMINI-FLASH-LATEST
   // -------------------------------------------------------------
   if (isGeminiKey) {
     try {
-      console.log("[LLM Service] Tier 1: Calling Google Gemini (gemini-1.5-flash-latest)...");
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash-latest:generateContent?key=${apiKey}`;
+      console.log("[LLM Service] Tier 1: Calling Google Gemini 2.5 Flash (models/gemini-2.5-flash)...");
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`;
 
       const response = await fetch(geminiUrl, {
         method: "POST",
@@ -41,12 +41,32 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
         if (text) {
-          console.log("[Gemini 1.5 Flash Latest Success] Generated output cleanly.");
+          console.log("[Gemini 2.5 Flash Success] Generated output cleanly.");
           return text;
         }
       } else {
         const errTxt = await response.text();
         console.warn(`[Gemini API Error ${response.status}]:`, errTxt);
+
+        // Fallback to models/gemini-flash-latest alias
+        console.log("[LLM Fallback] Retrying Gemini with models/gemini-flash-latest...");
+        const retryUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+        const retryRes = await fetch(retryUrl, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            contents: [{ role: "user", parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }] }],
+            generationConfig: { temperature }
+          })
+        });
+        if (retryRes.ok) {
+          const retryData = await retryRes.json();
+          const retryText = retryData.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
+          if (retryText) {
+            console.log("[Gemini Flash-Latest Success] Generated output cleanly.");
+            return retryText;
+          }
+        }
       }
     } catch (err) {
       console.warn("[Gemini API Exception]:", err.message);
@@ -54,49 +74,11 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
   }
 
   // -------------------------------------------------------------
-  // TIER 2: GROQ CLOUD LLAMA 3.1 8B INSTANT
+  // TIER 2: GROQ CLOUD OPENAI/GPT-OSS-20B
   // -------------------------------------------------------------
   if (groqKey && groqKey.startsWith("gsk_")) {
     try {
-      console.log("[LLM Service] Tier 2: Calling Groq (llama-3.1-8b-instant)...");
-      const groqUrl = "https://api.groq.com/openai/v1/chat/completions";
-
-      const response = await fetch(groqUrl, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${groqKey}`
-        },
-        body: JSON.stringify({
-          model: "llama-3.1-8b-instant",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          temperature: temperature
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content?.trim();
-        if (text) {
-          console.log("[Groq Llama 3.1 Instant Success] Generated output cleanly.");
-          return text;
-        }
-      } else {
-        const errTxt = await response.text();
-        console.warn(`[Groq Llama 3.1 Error ${response.status}]:`, errTxt);
-      }
-    } catch (err) {
-      console.warn("[Groq Llama 3.1 Exception]:", err.message);
-    }
-
-    // -------------------------------------------------------------
-    // TIER 3: GROQ MIXTRAL 8X7B FALLBACK
-    // -------------------------------------------------------------
-    try {
-      console.log("[LLM Service] Tier 3: Retrying Groq (mixtral-8x7b-32768)...");
+      console.log("[LLM Service] Tier 2: Calling Groq (openai/gpt-oss-20b)...");
       const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
         method: "POST",
         headers: {
@@ -104,7 +86,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
           "Authorization": `Bearer ${groqKey}`
         },
         body: JSON.stringify({
-          model: "mixtral-8x7b-32768",
+          model: "openai/gpt-oss-20b",
           messages: [
             { role: "system", content: systemPrompt },
             { role: "user", content: userPrompt }
@@ -117,12 +99,15 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         const data = await response.json();
         const text = data.choices?.[0]?.message?.content?.trim();
         if (text) {
-          console.log("[Groq Mixtral 8x7B Success] Generated output cleanly.");
+          console.log("[Groq GPT-OSS-20B Success] Generated output cleanly.");
           return text;
         }
+      } else {
+        const errTxt = await response.text();
+        console.warn(`[Groq GPT-OSS Error ${response.status}]:`, errTxt);
       }
     } catch (err) {
-      console.warn("[Groq Mixtral Exception]:", err.message);
+      console.warn("[Groq Exception]:", err.message);
     }
   }
 
@@ -219,15 +204,13 @@ async function divideAndCategorizeInterviewWithLLM(QandAList, settings = {}) {
 }
 
 /**
- * TIER 4 HEURISTIC RULE-BASED SEGMENTER (Guaranteed Safety Net)
- * Smart keyword & question prompt matcher for offline/fallback scenarios
+ * TIER 3 HEURISTIC RULE-BASED SEGMENTER (Guaranteed Safety Net)
  */
 function heuristicSegmentTranscript(transcriptText, questionsList = []) {
   if (!transcriptText || !transcriptText.trim()) return [];
 
   const text = transcriptText.trim();
 
-  // Question keyword mapping
   const KEYWORD_MAP = [
     { id: 1, keywords: ["name", "introduce", "myself", "i am", "my name is"] },
     { id: 2, keywords: ["problem statement", "problem is", "aim is", "building a"] },
@@ -247,11 +230,9 @@ function heuristicSegmentTranscript(transcriptText, questionsList = []) {
     const qNum = idx + 1;
     const rule = KEYWORD_MAP.find((r) => r.id === qNum) || { keywords: [q.text.toLowerCase()] };
 
-    // Find matching sentences
     const sentences = text.split(/(?<=[.?!])\s+/);
     const matchedSentences = sentences.filter((s) => {
       const lower = s.toLowerCase();
-      // Exclude interviewer intro sentences
       if (lower.startsWith("can you") || lower.startsWith("what is") || lower.startsWith("next question") || lower.endsWith("?")) {
         return false;
       }
@@ -285,7 +266,7 @@ function heuristicSegmentTranscript(transcriptText, questionsList = []) {
  * TWO-PASS Full Continuous Interview Analyzer:
  * Pass 1: Speaker Diarization ([INTERVIEWER] vs [CANDIDATE]).
  * Pass 2: Question-by-Question Section Segmenter & Executive Summarizer.
- * Fallback: Tier 4 Heuristic Segmenter.
+ * Fallback: Tier 3 Heuristic Segmenter.
  */
 async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsList = [], settings = {}) {
   if (!fullTranscriptText || !fullTranscriptText.trim()) {
@@ -397,7 +378,7 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
     }
   }
 
-  console.log("[LLM Pipeline] Executing Tier 4 Heuristic Rule Segmenter Safety Net...");
+  console.log("[LLM Pipeline] Executing Tier 3 Heuristic Rule Segmenter Safety Net...");
   return heuristicSegmentTranscript(fullTranscriptText, questionsList);
 }
 
