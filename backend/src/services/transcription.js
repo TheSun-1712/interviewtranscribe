@@ -14,7 +14,7 @@ async function transcribeAudio(filePath) {
 
   console.log(`[Transcription] Processing audio file: ${filePath}`);
 
-  // 1. Try Groq Cloud Whisper Large V3 API if key present
+  // 1. Try Groq Cloud Whisper Large V3 API if key present (10s timeout)
   if (groqApiKey && groqApiKey.startsWith("gsk_")) {
     try {
       const formData = new FormData();
@@ -38,7 +38,10 @@ async function transcribeAudio(filePath) {
         "Technical candidate interview recording containing questions about introduction, problem statement, implementation plan, domain knowledge, DSA ideation, training and development, career vision, AAC focus, stay after hours availability, mentorship interest, and behavioral experiences."
       );
 
-      console.log(`[Groq API] Sending ${filename} (${contentType}) to Groq Whisper Large V3 with domain prompt...`);
+      console.log(`[Groq API] Sending ${filename} to Groq Whisper Large V3...`);
+
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 10000);
 
       const response = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
         method: "POST",
@@ -46,11 +49,13 @@ async function transcribeAudio(filePath) {
           "Authorization": `Bearer ${groqApiKey}`,
           ...formData.getHeaders()
         },
-        body: formData
+        body: formData,
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       const responseText = await response.text();
-      console.log(`[Groq API] Status: ${response.status}, Raw Response: ${responseText}`);
+      console.log(`[Groq API] Status: ${response.status}, Length: ${responseText.length}`);
 
       if (response.ok) {
         const data = JSON.parse(responseText);
@@ -62,22 +67,27 @@ async function transcribeAudio(filePath) {
         console.warn("[Groq API Error]:", response.status, responseText);
       }
     } catch (err) {
-      console.error("[Groq API Exception]:", err.message);
+      console.error("[Groq API Exception/Timeout]:", err.message);
     }
   }
 
-  // 2. Fallback to local faster-whisper FastAPI microservice
+  // 2. Fallback to local faster-whisper FastAPI microservice (5s timeout)
   try {
     const formData = new FormData();
     const filename = path.basename(filePath);
     formData.append("file", fs.createReadStream(filePath), { filename });
 
     console.log(`[Local Whisper] Sending ${filename} to local Whisper microservice at ${whisperUrl}...`);
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+
     const response = await fetch(`${whisperUrl}/transcribe`, {
       method: "POST",
       headers: formData.getHeaders(),
-      body: formData
+      body: formData,
+      signal: controller.signal
     });
+    clearTimeout(timeoutId);
 
     if (response.ok) {
       const data = await response.json();
@@ -86,7 +96,7 @@ async function transcribeAudio(filePath) {
       return text.trim();
     }
   } catch (err) {
-    console.warn("[Local Whisper Exception]:", err.message);
+    console.warn("[Local Whisper Exception/Timeout]:", err.message);
   }
 
   return "";

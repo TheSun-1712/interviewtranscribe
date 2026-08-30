@@ -4,11 +4,10 @@ const path = require("path");
 const fs = require("fs");
 const { uploadAudio } = require("../services/cloudinary");
 const { transcribeAudio } = require("../services/transcription");
-const { cleanTranscriptWithLLM } = require("../services/llm");
+const { summarizeCandidateResponse } = require("../services/llm");
 
 const router = express.Router();
 
-// Multer storage setup for uploads directory
 const uploadsDir = path.join(__dirname, "../../uploads/recordings");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir, { recursive: true });
@@ -54,9 +53,37 @@ module.exports = (prisma) => {
         return res.status(400).json({ error: "sessionId and questionId are required" });
       }
 
+      // 1. Ensure Session exists in DB
+      let existingSession = await prisma.session.findUnique({ where: { id: sessionId } });
+      if (!existingSession) {
+        let firstCand = await prisma.candidate.findFirst();
+        if (!firstCand) {
+          firstCand = await prisma.candidate.create({
+            data: { name: "Candidate 1", role: "Software Engineer", status: "in_progress" }
+          });
+        }
+        existingSession = await prisma.session.create({
+          data: {
+            id: sessionId,
+            candidateId: firstCand.id,
+            interviewer: "Lead Interviewer",
+            status: "in_progress"
+          }
+        });
+      }
+
+      // 2. Ensure Question exists in DB
+      let targetQuestion = await prisma.question.findUnique({ where: { id: questionId } });
+      if (!targetQuestion) {
+        const allQs = await prisma.question.findMany();
+        targetQuestion = allQs[0] || (await prisma.question.create({
+          data: { category: "Technical", text: "Interview Question", isCustom: true }
+        }));
+      }
+
       // Calculate take number
       const existingTakes = await prisma.recording.count({
-        where: { sessionId, questionId }
+        where: { sessionId: existingSession.id, questionId: targetQuestion.id }
       });
       const takeNumber = existingTakes + 1;
 
@@ -67,10 +94,10 @@ module.exports = (prisma) => {
       if (req.file) {
         const filePath = req.file.path;
 
-        // 1. Upload to Cloudinary (or local fallback)
+        // Upload to Cloudinary (or local fallback)
         audioUrl = await uploadAudio(filePath);
 
-        // 2. Transcribe audio using Groq Whisper API
+        // Transcribe audio using Groq Whisper API
         const aiTranscript = await transcribeAudio(filePath);
         if (aiTranscript) {
           rawTranscript = aiTranscript;
@@ -81,26 +108,24 @@ module.exports = (prisma) => {
         rawTranscript = "[No verbal transcript recorded]";
       }
 
-      // 3. Generate AI Answer Summary
-      const targetQuestion = await prisma.question.findUnique({ where: { id: questionId } });
+      // Generate AI Answer Summary
       const settingsList = await prisma.settings.findMany();
       const settingsMap = {};
       settingsList.forEach((s) => (settingsMap[s.key] = s.value));
 
-      const { summarizeCandidateResponse } = require("../services/llm");
       const aiSummary = await summarizeCandidateResponse(rawTranscript, targetQuestion?.text || "", settingsMap);
 
       // Deactivate previous takes if new take is primary
       await prisma.recording.updateMany({
-        where: { sessionId, questionId },
+        where: { sessionId: existingSession.id, questionId: targetQuestion.id },
         data: { isActive: false }
       });
 
       // Save to Database
       const recording = await prisma.recording.create({
         data: {
-          sessionId,
-          questionId,
+          sessionId: existingSession.id,
+          questionId: targetQuestion.id,
           takeNumber,
           audioUrl,
           rawTranscript,

@@ -1,3 +1,8 @@
+# Environment & Secrets
+.env
+.env.*
+backend/.env
+
 # Logs
 logs
 *.log
@@ -7,6 +12,7 @@ yarn-error.log*
 pnpm-debug.log*
 lerna-debug.log*
 
+# Dependencies & Build Outputs
 node_modules
 dist
 dist-ssr
@@ -15,10 +21,12 @@ dist-ssr
 .tanstack/**
 .nitro
 *.local
-*.zip
-.env
-*.xlsx
+
+# Audio Uploads & Zip Archives
 uploads/
+backend/uploads/
+*.zip
+Interview Insights1/
 
 # Wrangler / Cloudflare
 .wrangler/

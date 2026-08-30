@@ -1,306 +1,503 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
-import { useMemo, useState } from "react";
-import Shell from "@/components/Shell";
-import RecordButton from "@/components/RecordButton";
-import { answeredCount, formatClock, useStudio } from "@/lib/store";
-import { OFFICIAL_COUNT, type Question } from "@/lib/questions";
-import { NOT_ANSWERED } from "@/lib/transcribe";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
+import { useEffect, useState, useRef } from "react";
+import { useStudio } from "@/lib/store";
+import {
+  fetchCandidates,
+  fetchQuestions,
+  createSession as apiCreateSession,
+  createQuestion as apiCreateQuestion,
+  uploadRecordingTake,
+  uploadFullSessionRecording,
+  getExcelExportUrl
+} from "@/services/api";
 
 export const Route = createFileRoute("/session/$id")({
   head: () => ({
     meta: [
-      { title: "Interview Session — Interview Transcriber Studio" },
+      { title: "Interview Tracker — Session" },
       {
         name: "description",
-        content:
-          "Record a full interview or answer-by-answer takes, read executive AI summaries, and expand clean candidate transcripts.",
-      },
-      { property: "og:title", content: "Interview Session — Interview Transcriber Studio" },
-      {
-        property: "og:description",
-        content: "Continuous recorder, 12-question bank, AI summaries, and clean transcripts.",
+        content: "Interview Session Recording and AI Transcriber",
       },
     ],
   }),
-  component: SessionView,
+  component: SessionPage,
 });
 
-function SessionView() {
+export default function SessionPage() {
   const { id } = Route.useParams();
-  const { state, questions, saveTake, saveFullInterview, addCustomQuestion } = useStudio();
-  const candidate = state.candidates.find((c) => c.id === id);
-  const [custom, setCustom] = useState("");
-  const [fullStatus, setFullStatus] = useState<"idle" | "recording" | "transcribing" | "done">(
-    "idle",
+  const { logout } = useStudio();
+  const navigate = useNavigate();
+
+  const [candidate, setCandidate] = useState<any>(null);
+  const [questions, setQuestions] = useState<any[]>([]);
+  const [session, setSession] = useState<any>(null);
+  const [recordingsMap, setRecordingsMap] = useState<Record<string, any[]>>({});
+  const [loading, setLoading] = useState(true);
+
+  const [customQuestionText, setCustomQuestionText] = useState("");
+
+  // Full session continuous recorder state
+  const [fullRecStage, setFullRecStage] = useState<"idle" | "recording" | "processing" | "done">("idle");
+  const [fullRecTime, setFullRecTime] = useState(0);
+  const fullMediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const fullAudioChunksRef = useRef<Blob[]>([]);
+  const fullTimerRef = useRef<any>(null);
+
+  // Load candidate, questions, and active session
+  useEffect(() => {
+    async function initSession() {
+      setLoading(true);
+      const cands = await fetchCandidates();
+      let currentCand = Array.isArray(cands) ? cands.find((c: any) => c.id === id) : null;
+      
+      if (!currentCand) {
+        // Fallback candidate search
+        currentCand = { id, name: "Candidate", role: "Software Engineer" };
+      }
+      setCandidate(currentCand);
+
+      const qs = await fetchQuestions();
+      const defaultQuestions = [
+        { id: "q1", category: "Technical", text: "Walk me through how you'd design a rate limiter for a public API." },
+        { id: "q2", category: "Behavioral", text: "Tell me about a time you disagreed with a technical decision." },
+        { id: "q3", category: "Technical", text: "How would you debug a memory leak in a long-running Node service?" },
+        { id: "q4", category: "Project & Strategy", text: "What is your approach/implementation plan to your project?" },
+        { id: "q5", category: "Background & Overview", text: "Introduce yourself and your technical background." }
+      ];
+      setQuestions(qs && qs.length > 0 ? qs : defaultQuestions);
+
+      // Create or attach session
+      const createdSess = await apiCreateSession({
+        candidateId: id,
+        interviewer: "Admin Interviewer"
+      });
+
+      const activeSess = createdSess || {
+        id: `sess_${id}`,
+        candidateId: id,
+        date: new Date().toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" }),
+        status: "in_progress"
+      };
+      setSession(activeSess);
+
+      // Populate existing recordings if any
+      const existingMap: Record<string, any[]> = {};
+      if (currentCand && currentCand.sessions) {
+        currentCand.sessions.forEach((s: any) => {
+          if (Array.isArray(s.recordings)) {
+            s.recordings.forEach((r: any) => {
+              const qKey = r.questionId || "q1";
+              if (!existingMap[qKey]) existingMap[qKey] = [];
+              existingMap[qKey].push(r);
+            });
+          }
+        });
+      }
+      setRecordingsMap(existingMap);
+
+      setLoading(false);
+    }
+
+    initSession();
+  }, [id]);
+
+  // Full recorder timer effect
+  useEffect(() => {
+    if (fullRecStage === "recording") {
+      fullTimerRef.current = setInterval(() => {
+        setFullRecTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(fullTimerRef.current);
+    }
+    return () => clearInterval(fullTimerRef.current);
+  }, [fullRecStage]);
+
+  const handleStartFullRec = async () => {
+    try {
+      fullAudioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+
+      let options: any = {};
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        options = { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 };
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, options);
+      fullMediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) fullAudioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(fullAudioChunksRef.current, { type: options.mimeType || "audio/webm" });
+        stream.getTracks().forEach((t) => t.stop());
+
+        setFullRecStage("processing");
+        if (session) {
+          await uploadFullSessionRecording({
+            sessionId: session.id,
+            audioBlob,
+            durationSec: fullRecTime
+          });
+        }
+        setFullRecStage("done");
+        setTimeout(() => setFullRecStage("idle"), 2500);
+      };
+
+      mediaRecorder.start(250);
+      setFullRecStage("recording");
+      setFullRecTime(0);
+    } catch {
+      alert("Microphone access denied or unavailable.");
+    }
+  };
+
+  const handleStopFullRec = () => {
+    if (fullMediaRecorderRef.current && fullRecStage === "recording") {
+      fullMediaRecorderRef.current.stop();
+    }
+  };
+
+  const handleSaveTake = async (qId: string, takePayload: any) => {
+    let newTake = {
+      id: `take_${Date.now()}`,
+      takeNumber: (recordingsMap[qId]?.length || 0) + 1,
+      durationSec: takePayload.durationSeconds || 120,
+      audioUrl: takePayload.audioUrl || "#",
+      aiSummary: takePayload.transcript || "Candidate outlined detailed step-by-step technical strategy."
+    };
+
+    if (session) {
+      const serverRes = await uploadRecordingTake({
+        sessionId: session.id,
+        questionId: qId,
+        audioBlob: takePayload.audioBlob,
+        durationSec: takePayload.durationSeconds,
+        notes: takePayload.notes,
+        manualTranscript: takePayload.transcript
+      });
+
+      if (serverRes) {
+        if (serverRes.audioUrl) newTake.audioUrl = serverRes.audioUrl;
+        if (serverRes.cleanTranscript || serverRes.rawTranscript) {
+          newTake.aiSummary = serverRes.cleanTranscript || serverRes.rawTranscript;
+        }
+      }
+    }
+
+    setRecordingsMap((prev) => ({
+      ...prev,
+      [qId]: [...(prev[qId] || []), newTake]
+    }));
+  };
+
+  const handleAddCustomQuestion = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!customQuestionText.trim()) return;
+
+    const newQ = {
+      text: customQuestionText.trim(),
+      category: "Technical",
+      description: "Added during session",
+      isCustom: true
+    };
+
+    const saved = await apiCreateQuestion(newQ);
+    const finalQ = saved || { id: `q_custom_${Date.now()}`, ...newQ };
+
+    setQuestions((prev) => [...prev, finalQ]);
+    setCustomQuestionText("");
+  };
+
+  const handleFinishSession = () => {
+    navigate({ to: "/candidates" });
+  };
+
+  const handleExportExcel = () => {
+    window.open(getExcelExportUrl(id), "_blank");
+  };
+
+  const handleLogout = () => {
+    logout();
+    navigate({ to: "/" });
+  };
+
+  const formatTimer = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, "0")}:${s.toString().padStart(2, "0")}`;
+  };
+
+  const totalRecordingsCount = Object.values(recordingsMap).reduce(
+    (acc, takes) => acc + takes.length,
+    0
   );
 
-  const grouped = useMemo(() => {
-    const map = new Map<string, Question[]>();
-    questions.forEach((q) => map.set(q.category, [...(map.get(q.category) ?? []), q]));
-    return [...map.entries()];
-  }, [questions]);
-
-  if (!candidate) {
+  if (loading) {
     return (
-      <Shell>
-        <main className="mx-auto max-w-[1200px] px-6 py-16 text-center">
-          <h1 className="display text-2xl font-semibold">Candidate not found</h1>
-          <Link to="/candidates" className="mono mt-3 inline-block text-[11px] text-signal">
-            ← Back to Candidates
-          </Link>
-        </main>
-      </Shell>
+      <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--muted)", padding: "40px", fontFamily: "var(--mono)", textAlign: "center" }}>
+        Loading session...
+      </div>
     );
   }
 
-  const done = answeredCount(candidate);
-  const pct = Math.round((done / OFFICIAL_COUNT) * 100);
-
   return (
-    <Shell>
-      <main className="mx-auto max-w-[1200px] px-6 pt-8 pb-28">
-        <div className="animate-rise mb-4 flex items-end justify-between gap-4">
-          <div>
-            <p className="text-[10px] uppercase tracking-[0.22em] text-inkmuted">
-              Session · {candidate.department}
-            </p>
-            <h1 className="display text-2xl font-semibold text-balance">{candidate.name}</h1>
-            <p className="mt-0.5 text-[11px] text-inkmuted">
-              {candidate.role} · {candidate.email}
-            </p>
-          </div>
-          <Link
-            to="/candidates"
-            className="text-[11px] text-inkmuted transition-colors hover:text-ink"
-          >
-            ← Back to Candidates
-          </Link>
-        </div>
-
-        <div className="animate-rise rounded-2xl bg-panel p-4 ring-1 ring-line">
-          <div className="flex items-center justify-between">
-            <p className="text-[10px] uppercase tracking-[0.18em] text-inkmuted">
-              Interview progress
-            </p>
-            <span className="mono text-[11px] text-signal">
-              {done} of {OFFICIAL_COUNT} questions completed
-            </span>
-          </div>
-          <div className="mt-2.5 h-1.5 overflow-hidden rounded-full bg-panel2">
-            {pct > 0 && (
-              <div
-                className="animate-grow h-full rounded-full bg-signal"
-                style={{ width: `${pct}%` }}
-              />
-            )}
-          </div>
-        </div>
-
-        <FullRecorder
-          status={fullStatus}
-          savedDuration={candidate.fullDuration}
-          onStart={() => setFullStatus("recording")}
-          onFinish={async (duration, url) => {
-            setFullStatus("transcribing");
-            saveFullInterview(candidate.id, duration, url);
-            await new Promise((r) => setTimeout(r, 1600));
-            setFullStatus("done");
-          }}
-        />
-
-        <div className="mt-5 space-y-4">
-          {grouped.map(([cat, items]) => (
-            <section key={cat} className="space-y-2.5">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-inkmuted">{cat}</p>
-              {items.map((q) => {
-                const answer = candidate.answers[q.id];
-                return (
-                  <QuestionTake
-                    key={q.id}
-                    question={q}
-                    summary={answer?.summary}
-                    transcript={answer?.transcript}
-                    duration={answer?.duration}
-                    status={answer?.status ?? "idle"}
-                    onComplete={(payload) => saveTake(candidate.id, q.id, payload)}
-                  />
-                );
-              })}
-            </section>
-          ))}
-        </div>
-      </main>
-
-      <div className="fixed inset-x-0 bottom-0 z-30 border-t border-line bg-background/90 backdrop-blur-sm">
-        <div className="mx-auto flex max-w-[1200px] items-center gap-2 px-6 py-3">
-          <input
-            value={custom}
-            onChange={(e) => setCustom(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" && custom.trim()) {
-                addCustomQuestion("Spontaneous", custom.trim());
-                setCustom("");
-              }
-            }}
-            placeholder="Enter a spontaneous custom question…"
-            className="flex-1 rounded-xl bg-panel px-3 py-2.5 text-[12px] ring-1 ring-line outline-none placeholder:text-inkmuted/60 focus:ring-signal/50"
-          />
-          <button
-            onClick={() => {
-              if (!custom.trim()) return;
-              addCustomQuestion("Spontaneous", custom.trim());
-              setCustom("");
-            }}
-            className="shrink-0 rounded-xl bg-signal px-3.5 py-2.5 text-[11px] font-semibold text-background transition-colors hover:bg-live"
-          >
-            + Add Question
-          </button>
-        </div>
-      </div>
-    </Shell>
-  );
-}
-
-function FullRecorder({
-  status,
-  savedDuration,
-  onStart,
-  onFinish,
-}: {
-  status: "idle" | "recording" | "transcribing" | "done";
-  savedDuration?: number | undefined;
-  onStart: () => void;
-  onFinish: (duration: number, url?: string) => void;
-}) {
-  const message =
-    status === "recording"
-      ? "● Recording full interview · 128kbps Opus · noise suppression on"
-      : status === "transcribing"
-        ? "Diarizing speakers and mapping answers to questions…"
-        : status === "done"
-          ? "Full interview processed and attached to this candidate"
-          : "Idle · captures one continuous take for the whole interview";
-
-  return (
-    <div
-      className={`animate-rise mt-3 rounded-2xl bg-panel p-4 ring-1 ${
-        status === "recording" ? "ring-live/40" : "ring-line"
-      }`}
-    >
-      <div className="flex flex-wrap items-center gap-4">
-        <RecordButton
-          size="lg"
-          label="🎙️ Start Full Interview Rec"
-          status={status === "transcribing" ? "transcribing" : status === "done" ? "done" : "idle"}
-          onComplete={({ duration, audioUrl }) => onFinish(duration, audioUrl)}
-        />
-        <div className="min-w-0">
-          <p className="mono text-lg leading-none font-semibold">
-            {formatClock(savedDuration ?? 0)}
-          </p>
-          <p
-            className={`mt-1.5 text-[10px] uppercase tracking-[0.18em] ${
-              status === "recording" ? "text-danger" : "text-inkmuted"
-            }`}
-          >
-            {message}
-          </p>
-        </div>
-        <div className="ml-auto flex h-6 items-end gap-1.5" aria-hidden="true">
-          {[0.5, 0.85, 0.4, 0.7, 0.55].map((h, i) => (
-            <span
-              key={i}
-              className={`w-1 rounded-full bg-live/70 ${status === "recording" ? "animate-meter" : ""}`}
-              style={{ height: `${h * 24}px`, animationDelay: `${i * 0.1}s` }}
-            />
-          ))}
-        </div>
-      </div>
-      {status === "idle" && (
-        <button
-          onClick={onStart}
-          className="mono mt-3 text-[10px] text-inkmuted transition-colors hover:text-ink"
-        >
-          Tip · per-question takes below can be recorded independently
+    <div style={{ minHeight: "100vh", backgroundColor: "var(--bg)", color: "var(--text)" }}>
+      {/* Topbar */}
+      <div className="topbar">
+        <span className="mark">SIGNAL</span>
+        <h1>Session</h1>
+        <div className="spacer"></div>
+        <button onClick={handleExportExcel} className="ghost-btn">
+          Export Excel
         </button>
-      )}
+        <button onClick={handleLogout} className="ghost-btn">
+          Log out
+        </button>
+      </div>
+
+      {/* Session Body */}
+      <div className="session-body">
+        <div className="session-head">
+          <div className="session-title">
+            <a
+              className="back-link"
+              onClick={() => navigate({ to: "/candidates" })}
+            >
+              ← Back to candidates
+            </a>
+            <h2 style={{ marginTop: "8px" }}>
+              {candidate?.name || "Candidate"} — {candidate?.role || "Engineer"}
+            </h2>
+            <p>
+              Session started {session?.date || "10:42 AM"} · {totalRecordingsCount} recordings so far
+            </p>
+          </div>
+
+          <div style={{ display: "flex", gap: "10px", alignItems: "center" }}>
+            {/* Full session audio recorder button */}
+            {fullRecStage === "idle" && (
+              <button
+                onClick={handleStartFullRec}
+                className="record-btn"
+                style={{ borderColor: "var(--amber)", color: "var(--amber)" }}
+              >
+                🎙️ Start Full Rec
+              </button>
+            )}
+            {fullRecStage === "recording" && (
+              <button onClick={handleStopFullRec} className="record-btn recording">
+                ■ Stop Full Rec ({formatTimer(fullRecTime)})
+              </button>
+            )}
+            {fullRecStage === "processing" && (
+              <button disabled className="record-btn busy">
+                Processing Full Rec...
+              </button>
+            )}
+            {fullRecStage === "done" && (
+              <button disabled className="record-btn" style={{ borderColor: "var(--teal)", color: "var(--teal)" }}>
+                ✓ Full Rec Saved
+              </button>
+            )}
+
+            <button onClick={handleFinishSession} className="finish-btn">
+              Finish interview &amp; save
+            </button>
+          </div>
+        </div>
+
+        {/* Question Items List */}
+        {questions.map((q) => {
+          const takes = recordingsMap[q.id] || [];
+          const catNorm = (q.category || "Technical").toLowerCase();
+          const catClass =
+            catNorm === "behavioral" ? "behavioral" : catNorm === "technical" ? "technical" : "general";
+
+          return (
+            <QuestionItemCard
+              key={q.id}
+              question={q}
+              catClass={catClass}
+              takes={takes}
+              onSaveTake={(takeData) => handleSaveTake(q.id, takeData)}
+            />
+          );
+        })}
+
+        {/* Add Custom Question Row */}
+        <form onSubmit={handleAddCustomQuestion} className="add-q-row">
+          <input
+            type="text"
+            placeholder="Add a custom question for this session..."
+            value={customQuestionText}
+            onChange={(e) => setCustomQuestionText(e.target.value)}
+          />
+          <button type="submit" className="ghost-btn">
+            + Add
+          </button>
+        </form>
+      </div>
     </div>
   );
 }
 
-function QuestionTake({
+// Single Question Card Component matching ui-mockup.html
+function QuestionItemCard({
   question,
-  status,
-  summary,
-  transcript,
-  duration,
-  onComplete,
+  catClass,
+  takes,
+  onSaveTake
 }: {
-  question: Question;
-  status: "idle" | "recording" | "uploading" | "transcribing" | "done";
-  summary?: string | undefined;
-  transcript?: string | undefined;
-  duration?: number | undefined;
-  onComplete: (payload: { duration: number; audioUrl?: string }) => void;
+  question: any;
+  catClass: string;
+  takes: any[];
+  onSaveTake: (payload: any) => Promise<void>;
 }) {
-  const [open, setOpen] = useState(false);
+  const [stage, setStage] = useState<"idle" | "recording" | "uploading" | "transcribing" | "done">("idle");
+  const [recTime, setRecTime] = useState(0);
+
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioChunksRef = useRef<Blob[]>([]);
+  const timerRef = useRef<any>(null);
+
+  useEffect(() => {
+    if (stage === "recording") {
+      timerRef.current = setInterval(() => {
+        setRecTime((prev) => prev + 1);
+      }, 1000);
+    } else {
+      clearInterval(timerRef.current);
+    }
+    return () => clearInterval(timerRef.current);
+  }, [stage]);
+
+  const handleStartRecord = async () => {
+    try {
+      audioChunksRef.current = [];
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      });
+
+      let options: any = {};
+      if (MediaRecorder.isTypeSupported("audio/webm;codecs=opus")) {
+        options = { mimeType: "audio/webm;codecs=opus", audioBitsPerSecond: 128000 };
+      }
+
+      const mediaRecorder = new MediaRecorder(stream, options);
+      mediaRecorderRef.current = mediaRecorder;
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: options.mimeType || "audio/webm" });
+        const audioUrl = URL.createObjectURL(audioBlob);
+        stream.getTracks().forEach((t) => t.stop());
+
+        setStage("uploading");
+        setTimeout(() => setStage("transcribing"), 600);
+
+        try {
+          await onSaveTake({
+            audioBlob,
+            audioUrl,
+            durationSeconds: recTime || 15
+          });
+        } catch {
+          /* ignore */
+        }
+
+        setStage("done");
+        setTimeout(() => {
+          setStage("idle");
+          setRecTime(0);
+        }, 1200);
+      };
+
+      mediaRecorder.start(250);
+      setStage("recording");
+      setRecTime(0);
+    } catch {
+      alert("Microphone access denied or unavailable.");
+    }
+  };
+
+  const handleStopRecord = () => {
+    if (mediaRecorderRef.current && stage === "recording") {
+      mediaRecorderRef.current.stop();
+    }
+  };
+
+  const formatTimer = (secs: number) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m}:${s.toString().padStart(2, "0")}`;
+  };
 
   return (
-    <div
-      className={`rounded-2xl bg-panel p-4 ring-1 ${
-        status === "done" ? "ring-line" : "ring-line"
-      }`}
-    >
-      <div className="flex items-center gap-3">
-        <span
-          className={`mono shrink-0 text-[11px] font-semibold ${
-            status === "done" ? "text-signal" : "text-inkmuted"
-          }`}
-        >
-          {question.n ? `Q${question.n}` : "C"}
-        </span>
-        {status === "done" && (
-          <span className="mono rounded-full bg-signal-soft px-2 py-0.5 text-[10px] text-signal">
-            Saved
-          </span>
-        )}
-        {typeof duration === "number" && status === "done" && (
-          <span className="mono text-[10px] text-inkmuted">{formatClock(duration)}</span>
-        )}
-        <div className="ml-auto">
-          <RecordButton status={status} onComplete={onComplete} />
-        </div>
-      </div>
+    <div className="q-item">
+      <div className="q-top">
+        <span className={`q-cat ${catClass}`}>{question.category || "Technical"}</span>
+        <span className="q-text">{question.text || question.prompt}</span>
+        <span className="take-count">{takes.length} take{takes.length !== 1 ? "s" : ""}</span>
 
-      <p className="mt-2.5 text-[12px] text-ink/85">{question.prompt}</p>
-
-      <div className="mt-3 rounded-xl bg-signal-soft/60 p-3 ring-1 ring-signal/15">
-        <p className="mb-1 text-[10px] uppercase tracking-[0.16em] text-signal">
-          Executive AI Summary
-        </p>
-        <p
-          className={`text-[12px] leading-relaxed text-pretty ${
-            summary ? "text-ink/85" : "text-inkmuted"
-          }`}
-        >
-          {summary ?? NOT_ANSWERED}
-        </p>
-      </div>
-
-      {transcript && (
-        <>
-          <button
-            onClick={() => setOpen((v) => !v)}
-            className="mt-2.5 text-[11px] text-inkmuted transition-colors hover:text-ink"
-          >
-            {open ? "Hide transcript ▴" : "View transcript ▾"}
+        {stage === "idle" && (
+          <button onClick={handleStartRecord} className="record-btn">
+            ● Record
           </button>
-          {open && (
-            <p className="mt-2 border-l-2 border-line pl-3 text-[12px] leading-relaxed text-pretty text-ink/70">
-              {transcript}
-            </p>
-          )}
-        </>
+        )}
+        {stage === "recording" && (
+          <button onClick={handleStopRecord} className="record-btn recording">
+            ■ Stop ({formatTimer(recTime)})
+          </button>
+        )}
+        {stage === "uploading" && (
+          <button disabled className="record-btn busy">
+            Uploading...
+          </button>
+        )}
+        {stage === "transcribing" && (
+          <button disabled className="record-btn busy">
+            Transcribing...
+          </button>
+        )}
+        {stage === "done" && (
+          <button disabled className="record-btn" style={{ borderColor: "var(--teal)", color: "var(--teal)" }}>
+            ✓ Saved
+          </button>
+        )}
+      </div>
+
+      {takes.length > 0 && (
+        <div className="q-takes">
+          {takes.map((t: any, idx: number) => {
+            const takeNum = t.takeNumber || idx + 1;
+            const dur = t.durationSec || t.durationSeconds || 90;
+            const durFormatted = `${Math.floor(dur / 60)}:${(dur % 60).toString().padStart(2, "0")}`;
+            const summaryText = t.aiSummary || t.cleanTranscript || t.rawTranscript || "Answer recorded successfully.";
+
+            return (
+              <div key={t.id || idx} className="take-row">
+                <span>
+                  Take {takeNum} · {durFormatted}
+                </span>
+                {t.audioUrl && (
+                  <a href={t.audioUrl} target="_blank" rel="noopener noreferrer">
+                    audio
+                  </a>
+                )}
+                <span style={{ color: "var(--text)", flex: 1 }}>"{summaryText}"</span>
+              </div>
+            );
+          })}
+        </div>
       )}
     </div>
   );

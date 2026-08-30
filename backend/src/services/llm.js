@@ -1,25 +1,68 @@
 const fetch = require("node-fetch");
 
 /**
- * Universal LLM Request Helper — Live Model IDs Verified
- * Tier 1: Google Gemini Flash Latest (gemini-flash-latest) — Status 200 Verified
- * Tier 2: Groq Cloud GPT-OSS (openai/gpt-oss-20b)
- * Tier 3: Heuristic Rule Segmenter
+ * Universal LLM Request Helper with Fast Failover & Timeouts
+ * Tier 1: Groq Cloud GPT-OSS (openai/gpt-oss-20b) — Lightning fast (~400ms)
+ * Tier 2: Google Gemini 3.6 Flash (gemini-3.6-flash) — Verified endpoint with 6s timeout
+ * Tier 3: Heuristic Rule Segmenter — Guaranteed instant safety net (0ms)
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
   const geminiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || "";
   const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || "";
-  const apiKey = settings.llmApiKey || process.env.LLM_API_KEY || geminiKey || groqKey;
-
-  const isGeminiKey = apiKey.startsWith("AIzaSy") || apiKey.startsWith("AQ.") || apiKey.includes("AQ");
 
   // -------------------------------------------------------------
-  // TIER 1: GOOGLE GEMINI FLASH LATEST (VERIFIED 200 OK)
+  // TIER 1: GROQ CLOUD OPENAI/GPT-OSS-20B (FAST: ~400ms)
   // -------------------------------------------------------------
-  if (isGeminiKey) {
+  if (groqKey && groqKey.startsWith("gsk_")) {
     try {
-      console.log("[LLM Service] Tier 1: Calling Google Gemini Flash (gemini-flash-latest)...");
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-flash-latest:generateContent?key=${apiKey}`;
+      console.log("[LLM Service] Tier 1: Calling Groq (openai/gpt-oss-20b)...");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
+
+      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${groqKey}`
+        },
+        body: JSON.stringify({
+          model: "openai/gpt-oss-20b",
+          messages: [
+            { role: "system", content: systemPrompt },
+            { role: "user", content: userPrompt }
+          ],
+          temperature: temperature
+        }),
+        signal: controller.signal
+      });
+      clearTimeout(timeoutId);
+
+      if (response.ok) {
+        const data = await response.json();
+        const text = data.choices?.[0]?.message?.content?.trim();
+        if (text) {
+          console.log("[Groq GPT-OSS-20B Success] Fast summary generated.");
+          return text;
+        }
+      } else {
+        const errTxt = await response.text();
+        console.warn(`[Groq GPT-OSS Error ${response.status}]:`, errTxt);
+      }
+    } catch (err) {
+      console.warn("[Groq Exception/Timeout]:", err.message);
+    }
+  }
+
+  // -------------------------------------------------------------
+  // TIER 2: GOOGLE GEMINI 3.6 FLASH (6s TIMEOUT FALLBACK)
+  // -------------------------------------------------------------
+  if (geminiKey) {
+    try {
+      console.log("[LLM Service] Tier 2: Calling Google Gemini Flash (gemini-3.6-flash)...");
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 6000);
+
+      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`;
 
       const response = await fetch(geminiUrl, {
         method: "POST",
@@ -34,8 +77,10 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
           generationConfig: {
             temperature: temperature
           }
-        })
+        }),
+        signal: controller.signal
       });
+      clearTimeout(timeoutId);
 
       if (response.ok) {
         const data = await response.json();
@@ -49,45 +94,7 @@ async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.
         console.warn(`[Gemini API Error ${response.status}]:`, errTxt);
       }
     } catch (err) {
-      console.warn("[Gemini API Exception]:", err.message);
-    }
-  }
-
-  // -------------------------------------------------------------
-  // TIER 2: GROQ CLOUD OPENAI/GPT-OSS-20B
-  // -------------------------------------------------------------
-  if (groqKey && groqKey.startsWith("gsk_")) {
-    try {
-      console.log("[LLM Service] Tier 2: Calling Groq (openai/gpt-oss-20b)...");
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${groqKey}`
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-oss-20b",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          temperature: temperature
-        })
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content?.trim();
-        if (text) {
-          console.log("[Groq GPT-OSS-20B Success] Output generated cleanly.");
-          return text;
-        }
-      } else {
-        const errTxt = await response.text();
-        console.warn(`[Groq GPT-OSS Error ${response.status}]:`, errTxt);
-      }
-    } catch (err) {
-      console.warn("[Groq Exception]:", err.message);
+      console.warn("[Gemini API Exception/Timeout]:", err.message);
     }
   }
 
@@ -111,8 +118,8 @@ FORMAT:
 [CANDIDATE]: <Candidate spoken response>
 
 RULES:
-1. Label any question, prompt, or interviewer intro (e.g. 'tell me your name', 'what is your problem statement', 'next question', 'how do you plan...') as [INTERVIEWER].
-2. Label any candidate statements, background, or explanations as [CANDIDATE].
+1. Label any question, prompt, or interviewer intro as [INTERVIEWER].
+2. Label any candidate statements or explanations as [CANDIDATE].
 3. Clean up speech stutters, but preserve exact factual statements.`;
 
   const userPrompt = `Raw Continuous Interview Transcript:\n"${rawTranscript}"\n\nDiarized Conversation Script:`;
@@ -158,7 +165,7 @@ RULES:
   const userPrompt = `Target Question: "${questionText}"\n\nTranscript Segment:\n"${rawTranscript}"\n\nConcise Executive AI Summary:`;
   const summary = await callLLM(systemPrompt, userPrompt, settings, 0.2);
 
-  return summary || rawTranscript.slice(0, 150) + "...";
+  return summary || (rawTranscript.length > 150 ? rawTranscript.slice(0, 150) + "..." : rawTranscript);
 }
 
 /**

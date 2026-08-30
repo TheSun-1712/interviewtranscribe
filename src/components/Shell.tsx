@@ -65,11 +65,10 @@ export default function Shell({ children }: { children: ReactNode }) {
                 <Link
                   key={item.to}
                   to={item.to}
-                  className={`rounded-full px-3 py-2 transition-colors ${
-                    active
+                  className={`rounded-full px-3 py-2 transition-colors ${active
                       ? "bg-signal-soft font-semibold text-signal"
                       : "text-inkmuted hover:bg-panel2"
-                  }`}
+                    }`}
                 >
                   {item.label}
                 </Link>

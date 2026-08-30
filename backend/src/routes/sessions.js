@@ -68,6 +68,12 @@ module.exports = (prisma) => {
       const { candidateId, interviewer } = req.body;
       if (!candidateId) return res.status(400).json({ error: "candidateId is required" });
 
+      // Ensure candidate exists
+      const existingCand = await prisma.candidate.findUnique({ where: { id: candidateId } });
+      if (!existingCand) {
+        return res.status(404).json({ error: `Candidate with ID ${candidateId} not found` });
+      }
+
       const session = await prisma.session.create({
         data: {
           candidateId,
@@ -111,14 +117,21 @@ module.exports = (prisma) => {
       // 4. Auto-divide & analyze full interview using Groq Llama AI
       const dividedSections = await parseAndDivideFullInterviewWithLLM(fullTranscript, questionsList, settingsMap);
 
-      // 5. Save full audio URL & transcript on Session row
+      // 5. Ensure Session row exists in DB
       let existingSession = await prisma.session.findUnique({ where: { id: sessionId } });
       if (!existingSession) {
-        const firstCand = await prisma.candidate.findFirst();
+        let candidateToUse = await prisma.candidate.findFirst();
+        if (!candidateToUse) {
+          candidateToUse = await prisma.candidate.create({
+            data: { name: "Candidate 1", role: "Software Engineer", status: "in_progress" }
+          });
+        }
+
         existingSession = await prisma.session.create({
           data: {
             id: sessionId,
-            candidateId: firstCand?.id || (await prisma.candidate.create({ data: { name: "Candidate 1", status: "in_progress" } })).id,
+            candidateId: candidateToUse.id,
+            interviewer: "Lead Interviewer",
             status: "in_progress"
           }
         });
@@ -134,24 +147,35 @@ module.exports = (prisma) => {
         include: { candidate: true }
       });
 
-      // 6. Create section recording rows for each auto-partitioned question answer
-      for (const item of dividedSections) {
-        const matchingQ = questionsList.find((q) => q.id === item.questionId || q.text === item.questionText) || questionsList[0];
-        if (matchingQ) {
-          await prisma.recording.create({
-            data: {
-              sessionId,
-              questionId: matchingQ.id,
-              takeNumber: 1,
-              audioUrl: fullAudioUrl,
-              rawTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
-              cleanTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
-              aiSummary: item.aiSummary,
-              keyPoints: item.keyTakeaways,
-              durationSec: parseInt(req.body.durationSec) || 0,
-              isActive: true
-            }
-          });
+      // 6. Create section recording rows for each auto-partitioned question answer safely
+      if (Array.isArray(dividedSections)) {
+        for (const item of dividedSections) {
+          const matchingQ =
+            questionsList.find((q) => q.id === item.questionId) ||
+            questionsList.find((q) => q.text.toLowerCase().trim() === item.questionText?.toLowerCase().trim()) ||
+            questionsList.find((q, idx) => idx + 1 === Number(item.qNumber));
+
+          const targetQuestion = matchingQ || questionsList[0];
+          if (!targetQuestion) continue;
+
+          try {
+            await prisma.recording.create({
+              data: {
+                sessionId: existingSession.id,
+                questionId: targetQuestion.id,
+                takeNumber: 1,
+                audioUrl: fullAudioUrl,
+                rawTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
+                cleanTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
+                aiSummary: item.aiSummary || "Candidate answer recorded.",
+                keyPoints: item.keyTakeaways || "Response saved.",
+                durationSec: parseInt(req.body.durationSec) || 0,
+                isActive: true
+              }
+            });
+          } catch (recErr) {
+            console.warn(`[Session Recording Creation Warning for Question ${targetQuestion.id}]:`, recErr.message);
+          }
         }
       }
 
@@ -161,7 +185,7 @@ module.exports = (prisma) => {
       });
 
       const finalSession = await prisma.session.findUnique({
-        where: { id: sessionId },
+        where: { id: existingSession.id },
         include: {
           candidate: true,
           recordings: { include: { question: true } }

@@ -5,89 +5,101 @@ import { useStudio } from "@/lib/store";
 export const Route = createFileRoute("/")({
   head: () => ({
     meta: [
-      { title: "Sign In — Interview Transcriber Studio" },
+      { title: "Interview Tracker — Login" },
       {
         name: "description",
-        content:
-          "Operator sign-in for Interview Transcriber Studio: record interviews, auto-summarize answers, and export candidate workbooks.",
-      },
-      { property: "og:title", content: "Sign In — Interview Transcriber Studio" },
-      {
-        property: "og:description",
-        content: "Operator console for interview recording, AI summaries, and Excel exports.",
+        content: "Interview Tracker — SIGNAL / ADMIN ACCESS",
       },
     ],
   }),
   component: LoginView,
 });
 
+
 function LoginView() {
   const { ready, state, login } = useStudio();
   const navigate = useNavigate();
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
 
   useEffect(() => {
-    if (ready && state.authed) navigate({ to: "/candidates" });
+    if (ready && state.authed) {
+      navigate({ to: "/candidates" });
+    }
   }, [ready, state.authed, navigate]);
 
-  const submit = (e: React.FormEvent) => {
+  const submit = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (login(password)) navigate({ to: "/candidates" });
-    else setError("Invalid admin password");
+    setError(null);
+    if (!password) {
+      setError("Please enter the shared password");
+      return;
+    }
+
+    setIsLoading(true);
+    try {
+      const res = await fetch("http://localhost:4000/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ password })
+      });
+
+      if (res.ok || login(password)) {
+        login(password);
+        navigate({ to: "/candidates" });
+      } else {
+        setError("Invalid password");
+      }
+    } catch {
+      if (login(password)) {
+        navigate({ to: "/candidates" });
+      } else {
+        setError("Invalid password");
+      }
+    } finally {
+      setIsLoading(false);
+    }
   };
 
   return (
-    <main className="grid min-h-screen place-items-center px-6">
-      <div className="animate-rise w-full max-w-sm">
-        <div className="rounded-2xl bg-panel p-6 ring-1 ring-line">
-          <div className="flex items-end gap-1.5" aria-hidden="true">
-            {[0.35, 0.7, 1, 0.5, 0.85, 0.4, 0.95, 0.6, 0.3].map((h, i) => (
-              <span
-                key={i}
-                className="animate-meter w-1 rounded-full bg-live/70"
-                style={{ height: `${h * 32}px`, animationDelay: `${i * 0.09}s` }}
-              />
-            ))}
-          </div>
-          <p className="mt-5 text-[10px] uppercase tracking-[0.22em] text-inkmuted">
-            Signal · Admin Access
-          </p>
-          <h1 className="display mt-1 text-2xl font-semibold text-balance">
-            Interview Transcriber Studio
-          </h1>
-          <p className="mt-2 text-[12px] leading-relaxed text-inkmuted">
-            Enter the shared operator password to open the candidate roster.
-          </p>
-
-          <form onSubmit={submit} className="mt-5">
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => {
-                setPassword(e.target.value);
-                setError(null);
-              }}
-              placeholder="Admin password"
-              className="mono w-full rounded-xl bg-background px-3 py-2.5 text-[12px] ring-1 ring-line outline-none placeholder:text-inkmuted/60 focus:ring-signal/50"
-            />
-            {error && (
-              <p className="mt-2.5 rounded-lg bg-danger-soft px-3 py-2 text-[11px] text-danger">
-                {error}
-              </p>
-            )}
-            <button
-              type="submit"
-              className="mt-3 w-full rounded-xl bg-signal px-3 py-2.5 text-[11px] font-semibold text-background transition-colors hover:bg-live"
-            >
-              Sign In
-            </button>
-          </form>
+    <div className="login-wrap">
+      <div className="login-card">
+        <span className="login-mark">SIGNAL / ADMIN ACCESS</span>
+        <h1 className="login-title">Interview Tracker</h1>
+        <div className="login-meter">
+          <i style={{ height: "30%" }}></i>
+          <i style={{ height: "55%" }}></i>
+          <i style={{ height: "25%" }}></i>
+          <i style={{ height: "70%" }}></i>
+          <i style={{ height: "40%" }}></i>
+          <i style={{ height: "60%" }}></i>
+          <i style={{ height: "20%" }}></i>
+          <i style={{ height: "50%" }}></i>
         </div>
-        <p className="mono mt-3 text-center text-[10px] text-inkmuted">
-          Demo password · admin123
-        </p>
+        <label className="field-label">Shared password</label>
+        <form onSubmit={submit}>
+          <input
+            type="password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              setError(null);
+            }}
+            placeholder="Enter password"
+            autoFocus
+          />
+          {error && (
+            <span style={{ color: "var(--red)", fontFamily: "var(--mono)", fontSize: "11px", display: "block", marginBottom: "12px" }}>
+              {error}
+            </span>
+          )}
+          <button type="submit" className="btn-primary" disabled={isLoading}>
+            {isLoading ? "Signing in..." : "Sign in"}
+          </button>
+        </form>
       </div>
-    </main>
+    </div>
   );
 }
+

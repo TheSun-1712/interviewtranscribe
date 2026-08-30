@@ -84,6 +84,7 @@
     opacity: 0;
     transform: translateY(10px);
   }
+
   to {
     opacity: 1;
     transform: translateY(0);
@@ -97,20 +98,24 @@
 }
 
 @keyframes ring {
+
   0%,
   100% {
     box-shadow: 0 0 0 0 hsl(152 65% 52% / 0.4);
   }
+
   50% {
     box-shadow: 0 0 0 7px hsl(152 65% 52% / 0);
   }
 }
 
 @keyframes meter {
+
   0%,
   100% {
     transform: scaleY(0.35);
   }
+
   50% {
     transform: scaleY(1);
   }
@@ -141,4 +146,9 @@
   ::selection {
     background: var(--signal-soft);
   }
+}
+
+::selection {
+  background: var(--signal-soft);
+}
 }
