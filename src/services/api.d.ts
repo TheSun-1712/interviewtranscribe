@@ -1,5 +1,6 @@
 export function fetchCandidates(): Promise<any>;
 export function createCandidate(candData: any): Promise<any>;
+export function importCandidatesExcel(file: File, clearExisting?: boolean): Promise<any>;
 export function fetchQuestions(): Promise<any>;
 export function createQuestion(qData: any): Promise<any>;
 export function createSession(sessionData: any): Promise<any>;

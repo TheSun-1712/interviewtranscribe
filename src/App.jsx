@@ -5,7 +5,6 @@ import SessionView from "./components/SessionView";
 import QuestionManager from "./components/QuestionManager";
 import SettingsView from "./components/SettingsView";
 import { INITIAL_CANDIDATES, INITIAL_QUESTIONS } from "./utils/initialData";
-import { exportInterviewToExcel } from "./utils/excelExporter";
 import { fetchCandidates, fetchQuestions, createCandidate, createQuestion, createSession, uploadRecordingTake, resetDatabase, getExcelExportUrl } from "./services/api";
 
 export default function App() {
@@ -14,7 +13,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  const [candidates, setCandidates] = useState(INITIAL_CANDIDATES);
+  const [candidates, setCandidates] = useState([]);
   const [questions, setQuestions] = useState(INITIAL_QUESTIONS);
   const [recordingsMap, setRecordingsMap] = useState({});
 
@@ -22,14 +21,17 @@ export default function App() {
   const [activeSession, setActiveSession] = useState(null);
   const [activeView, setActiveView] = useState("candidates"); // candidates | session | questions | settings
 
+  const handleRefreshData = async () => {
+    const dbCandidates = await fetchCandidates();
+    if (dbCandidates && Array.isArray(dbCandidates)) {
+      setCandidates(dbCandidates);
+    }
+  };
+
   // Load from backend on mount
   useEffect(() => {
     async function loadBackendData() {
-      const dbCandidates = await fetchCandidates();
-      if (dbCandidates && dbCandidates.length > 0) {
-        setCandidates(dbCandidates);
-      }
-
+      await handleRefreshData();
       const dbQuestions = await fetchQuestions();
       if (dbQuestions && dbQuestions.length > 0) {
         setQuestions(dbQuestions);
@@ -217,6 +219,7 @@ export default function App() {
           onDeleteCandidate={handleDeleteCandidate}
           onExportExcel={handleExportExcel}
           onResetDatabase={handleResetDatabase}
+          onRefreshData={handleRefreshData}
           onLogout={handleLogout}
         />
       )}

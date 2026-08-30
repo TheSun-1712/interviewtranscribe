@@ -25,6 +25,24 @@ export async function createCandidate(candData) {
   }
 }
 
+export async function importCandidatesExcel(file, clearExisting = false) {
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+    formData.append("clearExisting", String(clearExisting));
+
+    const url = `${API_BASE}/candidates/import?clearExisting=${Boolean(clearExisting)}`;
+    const res = await fetch(url, {
+      method: "POST",
+      body: formData
+    });
+    return await res.json();
+  } catch (err) {
+    console.error("Import candidates Excel error:", err);
+    return { error: err.message };
+  }
+}
+
 export async function fetchQuestions() {
   try {
     const res = await fetch(`${API_BASE}/questions`);
