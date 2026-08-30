@@ -52,20 +52,20 @@ export default function SessionPage() {
       let currentCand = Array.isArray(cands) ? cands.find((c: any) => c.id === id) : null;
       
       if (!currentCand) {
-        // Fallback candidate search
-        currentCand = { id, name: "Candidate", role: "Software Engineer" };
+        currentCand = {
+          id,
+          name: "Candidate",
+          domainsAppliedFor: "Web Dev, AI/ML",
+          branchAndSection: "CSE - A",
+          domainInAAC: "Computer Vision",
+          cgpa: "8.5",
+          currentAttendance: "85%"
+        };
       }
       setCandidate(currentCand);
 
       const qs = await fetchQuestions();
-      const defaultQuestions = [
-        { id: "q1", category: "Technical", text: "Walk me through how you'd design a rate limiter for a public API." },
-        { id: "q2", category: "Behavioral", text: "Tell me about a time you disagreed with a technical decision." },
-        { id: "q3", category: "Technical", text: "How would you debug a memory leak in a long-running Node service?" },
-        { id: "q4", category: "Project & Strategy", text: "What is your approach/implementation plan to your project?" },
-        { id: "q5", category: "Background & Overview", text: "Introduce yourself and your technical background." }
-      ];
-      setQuestions(qs && qs.length > 0 ? qs : defaultQuestions);
+      setQuestions(qs && qs.length > 0 ? qs : []);
 
       // Create or attach session
       const createdSess = await apiCreateSession({
@@ -81,7 +81,7 @@ export default function SessionPage() {
       };
       setSession(activeSess);
 
-      // Populate existing recordings if any
+      // Populate existing recordings
       const existingMap: Record<string, any[]> = {};
       if (currentCand && currentCand.sessions) {
         currentCand.sessions.forEach((s: any) => {
@@ -169,7 +169,9 @@ export default function SessionPage() {
       takeNumber: (recordingsMap[qId]?.length || 0) + 1,
       durationSec: takePayload.durationSeconds || 120,
       audioUrl: takePayload.audioUrl || "#",
-      aiSummary: takePayload.transcript || "Candidate outlined detailed step-by-step technical strategy."
+      aiSummary: takePayload.transcript || "Candidate outlined detailed step-by-step technical strategy.",
+      score: null,
+      comments: ""
     };
 
     if (session) {
@@ -183,6 +185,7 @@ export default function SessionPage() {
       });
 
       if (serverRes) {
+        if (serverRes.id) newTake.id = serverRes.id;
         if (serverRes.audioUrl) newTake.audioUrl = serverRes.audioUrl;
         if (serverRes.cleanTranscript || serverRes.rawTranscript) {
           newTake.aiSummary = serverRes.cleanTranscript || serverRes.rawTranscript;
@@ -194,6 +197,30 @@ export default function SessionPage() {
       ...prev,
       [qId]: [...(prev[qId] || []), newTake]
     }));
+  };
+
+  const handleUpdateFeedback = async (recordingId: string, qId: string, score: any, comments: string) => {
+    // Update local state
+    setRecordingsMap((prev) => {
+      const existing = prev[qId] || [];
+      const updated = existing.map((rec) =>
+        rec.id === recordingId ? { ...rec, score, comments } : rec
+      );
+      return { ...prev, [qId]: updated };
+    });
+
+    // Save to backend
+    if (recordingId && !recordingId.startsWith("take_")) {
+      try {
+        await fetch(`http://localhost:4000/api/recordings/${recordingId}/feedback`, {
+          method: "PATCH",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ score, comments })
+        });
+      } catch (e) {
+        console.warn("Save feedback error:", e);
+      }
+    }
   };
 
   const handleAddCustomQuestion = async (e: React.FormEvent) => {
@@ -272,9 +299,16 @@ export default function SessionPage() {
               ← Back to candidates
             </a>
             <h2 style={{ marginTop: "8px" }}>
-              {candidate?.name || "Candidate"} — {candidate?.role || "Engineer"}
+              {candidate?.name || "Candidate"}
             </h2>
-            <p>
+            <div style={{ fontSize: "12px", color: "var(--muted)", marginTop: "4px" }}>
+              <span><strong>Domains:</strong> {candidate?.domainsAppliedFor || "N/A"}</span> · 
+              <span> <strong>Branch & Sec:</strong> {candidate?.branchAndSection || "N/A"}</span> · 
+              <span> <strong>AAC Domain:</strong> {candidate?.domainInAAC || "N/A"}</span> · 
+              <span> <strong>CGPA:</strong> {candidate?.cgpa || "N/A"}</span> · 
+              <span> <strong>Attendance:</strong> {candidate?.currentAttendance || "N/A"}</span>
+            </div>
+            <p style={{ marginTop: "4px" }}>
               Session started {session?.date || "10:42 AM"} · {totalRecordingsCount} recordings so far
             </p>
           </div>
@@ -326,6 +360,9 @@ export default function SessionPage() {
               catClass={catClass}
               takes={takes}
               onSaveTake={(takeData) => handleSaveTake(q.id, takeData)}
+              onUpdateFeedback={(recordingId, score, comments) =>
+                handleUpdateFeedback(recordingId, q.id, score, comments)
+              }
             />
           );
         })}
@@ -347,20 +384,33 @@ export default function SessionPage() {
   );
 }
 
-// Single Question Card Component matching ui-mockup.html
+// Single Question Card Component with Score and Comments feedback columns
 function QuestionItemCard({
   question,
   catClass,
   takes,
-  onSaveTake
+  onSaveTake,
+  onUpdateFeedback
 }: {
   question: any;
   catClass: string;
   takes: any[];
   onSaveTake: (payload: any) => Promise<void>;
+  onUpdateFeedback: (recordingId: string, score: any, comments: string) => void;
 }) {
   const [stage, setStage] = useState<"idle" | "recording" | "uploading" | "transcribing" | "done">("idle");
   const [recTime, setRecTime] = useState(0);
+
+  const activeTake = takes[takes.length - 1];
+  const [scoreVal, setScoreVal] = useState(activeTake?.score !== undefined && activeTake?.score !== null ? activeTake.score : "");
+  const [commentsVal, setCommentsVal] = useState(activeTake?.comments || "");
+
+  useEffect(() => {
+    if (activeTake) {
+      if (activeTake.score !== undefined && activeTake.score !== null) setScoreVal(activeTake.score);
+      if (activeTake.comments) setCommentsVal(activeTake.comments);
+    }
+  }, [activeTake]);
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioChunksRef = useRef<Blob[]>([]);
@@ -441,6 +491,20 @@ function QuestionItemCard({
     return `${m}:${s.toString().padStart(2, "0")}`;
   };
 
+  const handleScoreChange = (val: string) => {
+    setScoreVal(val);
+    if (activeTake && activeTake.id) {
+      onUpdateFeedback(activeTake.id, val, commentsVal);
+    }
+  };
+
+  const handleCommentsChange = (val: string) => {
+    setCommentsVal(val);
+    if (activeTake && activeTake.id) {
+      onUpdateFeedback(activeTake.id, scoreVal, val);
+    }
+  };
+
   return (
     <div className="q-item">
       <div className="q-top">
@@ -475,6 +539,7 @@ function QuestionItemCard({
         )}
       </div>
 
+      {/* Takes History */}
       {takes.length > 0 && (
         <div className="q-takes">
           {takes.map((t: any, idx: number) => {
@@ -497,6 +562,44 @@ function QuestionItemCard({
               </div>
             );
           })}
+
+          {/* Interactive Interviewer Evaluation Columns: Score & Comments */}
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "100px 1fr",
+              gap: "12px",
+              marginTop: "10px",
+              paddingTop: "10px",
+              borderTop: "1px solid var(--line)"
+            }}
+          >
+            <div>
+              <label className="field-label" style={{ marginBottom: "3px" }}>Score (1-10)</label>
+              <input
+                type="number"
+                min="0"
+                max="10"
+                step="0.5"
+                placeholder="e.g. 8.5"
+                value={scoreVal}
+                onChange={(e) => handleScoreChange(e.target.value)}
+                className="form-input"
+                style={{ padding: "6px 8px", fontSize: "12px" }}
+              />
+            </div>
+            <div>
+              <label className="field-label" style={{ marginBottom: "3px" }}>Interviewer Feedback Comments</label>
+              <input
+                type="text"
+                placeholder="Enter interviewer evaluation comments for this question..."
+                value={commentsVal}
+                onChange={(e) => handleCommentsChange(e.target.value)}
+                className="form-input"
+                style={{ padding: "6px 10px", fontSize: "12px" }}
+              />
+            </div>
+          </div>
         </div>
       )}
     </div>

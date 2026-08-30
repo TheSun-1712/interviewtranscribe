@@ -147,34 +147,52 @@ module.exports = (prisma) => {
         include: { candidate: true }
       });
 
-      // 6. Create section recording rows for each auto-partitioned question answer safely
+      // Clear previous recording rows for this session before saving newly segmented ones
+      await prisma.recording.deleteMany({
+        where: { sessionId: existingSession.id }
+      });
+
+      // 6. Create section recording rows ONLY for questions that were actually answered/encountered
       if (Array.isArray(dividedSections)) {
-        for (const item of dividedSections) {
+        for (let itemIdx = 0; itemIdx < dividedSections.length; itemIdx++) {
+          const item = dividedSections[itemIdx];
+
+          const isAnswered =
+            item.wasAnswered === true ||
+            (item.candidateAnswerOnly &&
+              !item.candidateAnswerOnly.includes("Not answered") &&
+              !item.candidateAnswerOnly.includes("not asked") &&
+              item.candidateAnswerOnly.trim().length > 3);
+
+          if (!isAnswered) {
+            continue; // Skip creating database recording row for unasked question
+          }
+
           const matchingQ =
             questionsList.find((q) => q.id === item.questionId) ||
             questionsList.find((q) => q.text.toLowerCase().trim() === item.questionText?.toLowerCase().trim()) ||
-            questionsList.find((q, idx) => idx + 1 === Number(item.qNumber));
+            questionsList[itemIdx] ||
+            questionsList[0];
 
-          const targetQuestion = matchingQ || questionsList[0];
-          if (!targetQuestion) continue;
+          if (!matchingQ) continue;
 
           try {
             await prisma.recording.create({
               data: {
                 sessionId: existingSession.id,
-                questionId: targetQuestion.id,
+                questionId: matchingQ.id,
                 takeNumber: 1,
                 audioUrl: fullAudioUrl,
-                rawTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
-                cleanTranscript: item.candidateAnswerOnly || item.fullSpokenSection || fullTranscript,
-                aiSummary: item.aiSummary || "Candidate answer recorded.",
+                rawTranscript: item.candidateAnswerOnly,
+                cleanTranscript: item.candidateAnswerOnly,
+                aiSummary: item.aiSummary || "Candidate response recorded.",
                 keyPoints: item.keyTakeaways || "Response saved.",
                 durationSec: parseInt(req.body.durationSec) || 0,
                 isActive: true
               }
             });
           } catch (recErr) {
-            console.warn(`[Session Recording Creation Warning for Question ${targetQuestion.id}]:`, recErr.message);
+            console.warn(`[Session Recording Creation Warning for Question ${matchingQ.id}]:`, recErr.message);
           }
         }
       }

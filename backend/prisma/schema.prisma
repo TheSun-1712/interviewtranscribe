@@ -22,15 +22,20 @@ model Settings {
 }
 
 model Candidate {
-  id          String    @id @default(cuid())
-  name        String
-  role        String?
-  department  String?
-  email       String?
-  notes       String?
-  status      String    @default("not_started")
-  createdAt   DateTime  @default(now())
-  sessions    Session[]
+  id                String    @id @default(cuid())
+  name              String
+  domainsAppliedFor String?   // Domains Applied For e.g. "Web Dev, AI/ML"
+  branchAndSection  String?   // Branch & Section e.g. "CSE - A"
+  domainInAAC       String?   // Domain in AAC e.g. "Computer Vision"
+  cgpa              String?   // CGPA e.g. "8.75"
+  currentAttendance String?   // Current Attendance e.g. "88%"
+  role              String?
+  department        String?
+  email             String?
+  notes             String?
+  status            String    @default("not_started")
+  createdAt         DateTime  @default(now())
+  sessions          Session[]
 }
 
 model Question {
@@ -69,6 +74,8 @@ model Recording {
   cleanTranscript String?
   aiSummary       String?  // Concise AI summary of candidate answer
   keyPoints       String?  // Key bullet takeaways
+  score           Float?   // Interviewer score rating (e.g. 8.5)
+  comments        String?  // Interviewer feedback comments
   durationSec     Int?
   notes           String?
   isActive        Boolean  @default(true)

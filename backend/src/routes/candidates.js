@@ -46,14 +46,31 @@ module.exports = (prisma) => {
   // POST create new candidate
   router.post("/", async (req, res) => {
     try {
-      const { name, role, department, email, notes } = req.body;
+      const {
+        name,
+        domainsAppliedFor,
+        branchAndSection,
+        domainInAAC,
+        cgpa,
+        currentAttendance,
+        role,
+        department,
+        email,
+        notes
+      } = req.body;
+
       if (!name) return res.status(400).json({ error: "Candidate name is required" });
 
       const candidate = await prisma.candidate.create({
         data: {
           name: name.trim(),
-          role: role?.trim() || "Candidate",
-          department: department?.trim() || "General",
+          domainsAppliedFor: domainsAppliedFor?.trim() || "Software Engineering",
+          branchAndSection: branchAndSection?.trim() || "CSE - A",
+          domainInAAC: domainInAAC?.trim() || "Computer Vision / AI",
+          cgpa: cgpa?.trim() || "8.5",
+          currentAttendance: currentAttendance?.trim() || "85%",
+          role: role?.trim() || domainsAppliedFor?.trim() || "Candidate",
+          department: department?.trim() || branchAndSection?.trim() || "Engineering",
           email: email?.trim() || `${name.toLowerCase().replace(/\s+/g, ".")}@example.com`,
           notes: notes?.trim() || "",
           status: "not_started"

@@ -48,7 +48,7 @@ module.exports = (prisma) => {
   // POST create recording (multipart audio upload)
   router.post("/", upload.single("audio"), async (req, res) => {
     try {
-      const { sessionId, questionId, durationSec, notes, manualTranscript } = req.body;
+      const { sessionId, questionId, durationSec, notes, manualTranscript, score, comments } = req.body;
       if (!sessionId || !questionId) {
         return res.status(400).json({ error: "sessionId and questionId are required" });
       }
@@ -131,6 +131,8 @@ module.exports = (prisma) => {
           rawTranscript,
           cleanTranscript: rawTranscript,
           aiSummary: aiSummary || rawTranscript.slice(0, 150),
+          score: score !== undefined ? parseFloat(score) : null,
+          comments: comments?.trim() || null,
           durationSec: parseInt(durationSec) || 0,
           notes: notes?.trim() || "",
           isActive: true
@@ -141,6 +143,23 @@ module.exports = (prisma) => {
       res.status(201).json(recording);
     } catch (err) {
       console.error("Recording creation error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH save score & comments feedback
+  router.patch("/:id/feedback", async (req, res) => {
+    try {
+      const { score, comments } = req.body;
+      const updated = await prisma.recording.update({
+        where: { id: req.params.id },
+        data: {
+          score: score !== undefined && score !== null && score !== "" ? parseFloat(score) : null,
+          comments: comments !== undefined ? comments.trim() : null
+        }
+      });
+      res.json(updated);
+    } catch (err) {
       res.status(500).json({ error: err.message });
     }
   });

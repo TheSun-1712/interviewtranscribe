@@ -1,12 +1,13 @@
 import os
+import re
 import tempfile
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, UploadFile, File, HTTPException, Body
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 load_dotenv()
 
-app = FastAPI(title="Faster-Whisper Speech-to-Text Microservice", version="1.0.0")
+app = FastAPI(title="Faster-Whisper Speech Translation & Smart Classifier", version="1.1.0")
 
 app.add_middleware(
     CORSMiddleware,
@@ -20,6 +21,18 @@ MODEL_SIZE = os.getenv("WHISPER_MODEL", "small")
 DEVICE = os.getenv("WHISPER_DEVICE", "cpu")
 
 whisper_model = None
+
+FILLER_REGEX = re.compile(
+    r"\b(so\s+yeah|okay\s+so|fine\s+so|you\s+know|i\s+mean|basically|actually|uhm+|um+|uh+|er+|ah+|yea+|yeah+)\b",
+    re.IGNORECASE
+)
+
+def strip_fillers(text: str) -> str:
+    if not text:
+        return ""
+    cleaned = FILLER_REGEX.sub(" ", text)
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 @app.on_event("startup")
 def load_model():
@@ -53,8 +66,10 @@ async def transcribe(file: UploadFile = File(...)):
             from faster_whisper import WhisperModel
             whisper_model = WhisperModel(MODEL_SIZE, device=DEVICE, compute_type="int8")
 
-        segments, info = whisper_model.transcribe(tmp_path, beam_size=5)
-        transcript = " ".join([segment.text.strip() for segment in segments])
+        # Use task='translate' so multilingual Telugu/Hindi/Hinglish audio is translated into English
+        segments, info = whisper_model.transcribe(tmp_path, beam_size=5, task="translate")
+        raw_transcript = " ".join([segment.text.strip() for segment in segments])
+        clean_transcript = strip_fillers(raw_transcript)
 
         try:
             os.remove(tmp_path)
@@ -62,7 +77,8 @@ async def transcribe(file: UploadFile = File(...)):
             pass
 
         return {
-            "text": transcript.trim() if hasattr(transcript, 'trim') else transcript,
+            "text": clean_transcript,
+            "raw_text": raw_transcript,
             "language": info.language,
             "duration": info.duration
         }

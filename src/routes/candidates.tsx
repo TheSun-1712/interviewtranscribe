@@ -28,12 +28,14 @@ export default function CandidatesPage() {
   const [candidates, setCandidates] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
 
-  // Add Candidate Modal/Form state
+  // Add Candidate Form state with exact requested parameters
   const [showAddForm, setShowAddForm] = useState(false);
   const [name, setName] = useState("");
-  const [role, setRole] = useState("");
-  const [department, setDepartment] = useState("");
-  const [email, setEmail] = useState("");
+  const [domainsAppliedFor, setDomainsAppliedFor] = useState("");
+  const [branchAndSection, setBranchAndSection] = useState("");
+  const [domainInAAC, setDomainInAAC] = useState("");
+  const [cgpa, setCgpa] = useState("");
+  const [currentAttendance, setCurrentAttendance] = useState("");
 
   // Reset Database Modal state
   const [showResetModal, setShowResetModal] = useState(false);
@@ -47,7 +49,6 @@ export default function CandidatesPage() {
     if (dbCandidates && Array.isArray(dbCandidates)) {
       setCandidates(dbCandidates);
     } else {
-      // Fallback to studio state if backend API offline
       setCandidates(state.candidates || []);
     }
     setLoading(false);
@@ -63,9 +64,11 @@ export default function CandidatesPage() {
 
     const newCandData = {
       name: name.trim(),
-      role: role.trim() || "Candidate",
-      department: department.trim() || "Engineering",
-      email: email.trim() || `${name.toLowerCase().replace(/\s+/g, ".")}@example.com`,
+      domainsAppliedFor: domainsAppliedFor.trim() || "Web Dev, AI/ML",
+      branchAndSection: branchAndSection.trim() || "CSE - A",
+      domainInAAC: domainInAAC.trim() || "Computer Vision",
+      cgpa: cgpa.trim() || "8.5",
+      currentAttendance: currentAttendance.trim() || "85%",
       status: "not_started"
     };
 
@@ -80,9 +83,11 @@ export default function CandidatesPage() {
     }
 
     setName("");
-    setRole("");
-    setDepartment("");
-    setEmail("");
+    setDomainsAppliedFor("");
+    setBranchAndSection("");
+    setDomainInAAC("");
+    setCgpa("");
+    setCurrentAttendance("");
     setShowAddForm(false);
   };
 
@@ -284,32 +289,52 @@ export default function CandidatesPage() {
                 />
               </div>
               <div>
-                <label className="field-label">Role / Position</label>
+                <label className="field-label">Domains Applied For</label>
                 <input
                   type="text"
-                  placeholder="e.g. Backend Engineer"
-                  value={role}
-                  onChange={(e) => setRole(e.target.value)}
+                  placeholder="e.g. Web Dev, AI/ML"
+                  value={domainsAppliedFor}
+                  onChange={(e) => setDomainsAppliedFor(e.target.value)}
                   className="form-input"
                 />
               </div>
               <div>
-                <label className="field-label">Department</label>
+                <label className="field-label">Branch & Section</label>
                 <input
                   type="text"
-                  placeholder="e.g. Engineering"
-                  value={department}
-                  onChange={(e) => setDepartment(e.target.value)}
+                  placeholder="e.g. CSE - A"
+                  value={branchAndSection}
+                  onChange={(e) => setBranchAndSection(e.target.value)}
                   className="form-input"
                 />
               </div>
               <div>
-                <label className="field-label">Email</label>
+                <label className="field-label">Domain in AAC</label>
                 <input
-                  type="email"
-                  placeholder="e.g. priya@company.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
+                  type="text"
+                  placeholder="e.g. Computer Vision"
+                  value={domainInAAC}
+                  onChange={(e) => setDomainInAAC(e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="field-label">CGPA</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 8.75"
+                  value={cgpa}
+                  onChange={(e) => setCgpa(e.target.value)}
+                  className="form-input"
+                />
+              </div>
+              <div>
+                <label className="field-label">Current Attendance (%)</label>
+                <input
+                  type="text"
+                  placeholder="e.g. 88%"
+                  value={currentAttendance}
+                  onChange={(e) => setCurrentAttendance(e.target.value)}
                   className="form-input"
                 />
               </div>
@@ -356,7 +381,6 @@ export default function CandidatesPage() {
                 actionText = "Resume session";
               }
 
-              // Compute recording stats
               let recCount = cand.recordingsCount || 0;
               let qCount = cand.questionsCount || 0;
 
@@ -368,24 +392,26 @@ export default function CandidatesPage() {
                 if (recSum > 0) recCount = recSum;
               }
 
-              const metaText =
-                isComplete
-                  ? `${qCount || 8} questions · ${recCount} recordings`
-                  : isInProgress
-                  ? `${qCount > 0 ? `${qCount} of 8` : "5 of 8"} questions · ${recCount} recordings`
-                  : "0 questions asked";
-
               return (
                 <div key={cand.id} className="cand-card">
                   <div>
                     <div className="cand-top">
                       <div>
                         <p className="cand-name">{cand.name}</p>
-                        <p className="cand-role">{cand.role || "Candidate"}</p>
+                        <p className="cand-role">{cand.branchAndSection || cand.role || "Branch & Sec"}</p>
                       </div>
                       <span className={`status-pill ${pillClass}`}>{pillText}</span>
                     </div>
-                    <div className="cand-meta">{metaText}</div>
+                    
+                    <div style={{ fontSize: "11.5px", color: "var(--muted)", marginBottom: "8px", fontFamily: "var(--sans)" }}>
+                      <div><strong>Domains:</strong> {cand.domainsAppliedFor || "N/A"}</div>
+                      <div><strong>AAC Domain:</strong> {cand.domainInAAC || "N/A"}</div>
+                      <div><strong>CGPA:</strong> {cand.cgpa || "N/A"} | <strong>Attnd:</strong> {cand.currentAttendance || "N/A"}</div>
+                    </div>
+
+                    <div className="cand-meta">
+                      {qCount > 0 ? `${qCount} questions` : "12 questions"} · {recCount} recordings
+                    </div>
                   </div>
 
                   <div>
