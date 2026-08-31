@@ -22,11 +22,11 @@ module.exports = (prisma) => {
     try {
       const settingsList = await prisma.settings.findMany();
       const settingsMap = {
-        llmBaseUrl: process.env.LLM_BASE_URL || "https://api.groq.com/openai/v1",
-        llmApiKey: process.env.GROQ_API_KEY || "",
-        llmModel: process.env.LLM_MODEL || "llama3-70b-8192",
+        llmBaseUrl: process.env.OLLAMA_BASE_URL || process.env.LLM_BASE_URL || "http://localhost:11434/v1",
+        llmApiKey: "",
+        llmModel: process.env.OLLAMA_MODEL || process.env.LLM_MODEL || "qwen3.5:4b",
         transcriptionUrl: process.env.WHISPER_SERVICE_URL || "http://localhost:9000",
-        cloudinaryCloudName: process.env.CLOUDINARY_CLOUD_NAME || "neugchyg"
+        storageMode: "local"
       };
 
       settingsList.forEach((s) => {

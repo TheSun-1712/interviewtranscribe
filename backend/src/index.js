@@ -4,7 +4,10 @@ const cors = require("cors");
 const cookieParser = require("cookie-parser");
 const path = require("path");
 const fs = require("fs");
+const http = require("http");
+const { Server } = require("socket.io");
 const { PrismaClient } = require("@prisma/client");
+const { getHostIp } = require("./services/cloudinary");
 
 const authRouter = require("./routes/auth");
 const candidatesRouter = require("./routes/candidates");
@@ -16,7 +19,41 @@ const exportRouter = require("./routes/export");
 
 const prisma = new PrismaClient();
 const app = express();
+const server = http.createServer(app);
 const PORT = process.env.PORT || 4000;
+
+// Socket.IO — allow all origins for LAN access
+const io = new Server(server, {
+  cors: {
+    origin: "*",
+    methods: ["GET", "POST"]
+  }
+});
+
+// Socket.IO connection handler
+io.on("connection", (socket) => {
+  console.log(`[Socket.IO] Client connected: ${socket.id}`);
+
+  // Client joins a room for a specific session/candidate
+  socket.on("join_session", (sessionId) => {
+    socket.join(`session:${sessionId}`);
+    console.log(`[Socket.IO] ${socket.id} joined session:${sessionId}`);
+  });
+
+  socket.on("leave_session", (sessionId) => {
+    socket.leave(`session:${sessionId}`);
+  });
+
+  // Candidate list room (for real-time flag/status updates)
+  socket.on("join_roster", () => {
+    socket.join("roster");
+    console.log(`[Socket.IO] ${socket.id} joined roster`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`[Socket.IO] Client disconnected: ${socket.id}`);
+  });
+});
 
 // Express Middlewares
 app.use(cors({ origin: true, credentials: true }));
@@ -33,17 +70,27 @@ app.use("/uploads", express.static(uploadsDir));
 
 // Health Check
 app.get("/health", (req, res) => {
-  res.json({ status: "ok", timestamp: new Date(), service: "Interview Transcriber Express Backend" });
+  res.json({
+    status: "ok",
+    timestamp: new Date(),
+    service: "Interview Transcriber Express Backend",
+    hostIp: getHostIp()
+  });
 });
 
 // API Routes
 app.use("/api/auth", authRouter);
-app.use("/api/candidates", candidatesRouter(prisma));
+app.use("/api/candidates", candidatesRouter(prisma, io));
 app.use("/api/questions", questionsRouter(prisma));
 app.use("/api/sessions", sessionsRouter(prisma));
 app.use("/api/recordings", recordingsRouter(prisma));
 app.use("/api/settings", settingsRouter(prisma));
 app.use("/api/export.xlsx", exportRouter(prisma));
+
+// Clip-based recording routes (new architecture)
+const { clipsRouter, sessionOpsRouter } = require("./routes/clips")(prisma, io);
+app.use("/api/clips", clipsRouter);
+app.use("/api/sessions", sessionOpsRouter);
 
 // Official 12-Question Interview Bank Seed
 const OFFICIAL_QUESTIONS = [
@@ -68,26 +115,15 @@ async function seedDatabase() {
       console.log("Seeding official 12-question interview bank into PostgreSQL...");
       await prisma.question.createMany({ data: OFFICIAL_QUESTIONS });
     }
-
-    const cCount = await prisma.candidate.count();
-    if (cCount === 0) {
-      console.log("Seeding fresh candidate profiles into PostgreSQL...");
-      await prisma.candidate.createMany({
-        data: [
-          { name: "Alex Morgan", role: "Full Stack Engineer", department: "Engineering", email: "alex.morgan@techcorp.com", status: "not_started" },
-          { name: "Samantha Vance", role: "AI & ML Engineer", department: "AAC Research", email: "samantha.vance@designhub.io", status: "not_started" },
-          { name: "David Chen", role: "Backend Architect", department: "Infrastructure", email: "david.chen@ai-labs.org", status: "not_started" },
-          { name: "Priya Sharma", role: "DevOps & Systems Engineer", department: "Operations", email: "priya.sharma@enterprise.com", status: "not_started" }
-        ]
-      });
-    }
   } catch (err) {
     console.warn("Database seed warning:", err.message);
   }
 }
 
-// Start Express server
-app.listen(PORT, async () => {
-  console.log(`Backend API running at http://localhost:${PORT}`);
+// Start HTTP server (with Socket.IO)
+server.listen(PORT, "0.0.0.0", async () => {
+  const hostIp = getHostIp();
+  console.log(`Backend API running at http://localhost:${PORT} (local)`);
+  console.log(`Backend API accessible on LAN at http://${hostIp}:${PORT}`);
   await seedDatabase();
 });

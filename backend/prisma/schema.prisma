@@ -34,6 +34,7 @@ model Candidate {
   email             String?
   notes             String?
   status            String    @default("not_started")
+  isFlagged         Boolean   @default(false)
   createdAt         DateTime  @default(now())
   sessions          Session[]
 }
@@ -49,17 +50,38 @@ model Question {
 }
 
 model Session {
-  id             String      @id @default(cuid())
-  candidateId    String
-  candidate      Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
-  userId         String?
-  user           User?       @relation(fields: [userId], references: [id])
-  interviewer    String?     @default("Lead Interviewer")
-  fullAudioUrl   String?     // Cloudinary URL for full continuous interview audio
-  fullTranscript String?     // Complete continuous transcription text
-  startedAt      DateTime    @default(now())
-  status         String      @default("in_progress")
-  recordings     Recording[]
+  id                String      @id @default(cuid())
+  candidateId       String
+  candidate         Candidate   @relation(fields: [candidateId], references: [id], onDelete: Cascade)
+  userId            String?
+  user              User?       @relation(fields: [userId], references: [id])
+  interviewer       String?     @default("Lead Interviewer")
+  fullAudioUrl      String?
+  fullTranscript    String?
+  startedAt         DateTime    @default(now())
+  status            String      @default("in_progress")
+  // Recording lock - which device ID currently holds the recording lock
+  recordingLockDevice String?
+  lockAcquiredAt    DateTime?
+  // Processing state flags
+  isTranscribing    Boolean     @default(false)
+  isAnalyzing       Boolean     @default(false)
+  transcriptionStatus String    @default("none")  // none | done | error
+  analysisStatus    String      @default("none")  // none | done | error
+  recordings        Recording[]
+  audioClips        AudioClip[]
+}
+
+model AudioClip {
+  id          String   @id @default(cuid())
+  sessionId   String
+  session     Session  @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  filePath    String   // Absolute local path on the server
+  audioUrl    String   // LAN-accessible URL for playback on all devices
+  durationSec Int?
+  transcript  String?  // Populated after Transcribe is clicked
+  status      String   @default("pending")  // pending | transcribing | done | error
+  recordedAt  DateTime @default(now())
 }
 
 model Recording {
@@ -69,13 +91,13 @@ model Recording {
   questionId      String
   question        Question @relation(fields: [questionId], references: [id], onDelete: Cascade)
   takeNumber      Int
-  audioUrl        String?  // Cloudinary URL
+  audioUrl        String?
   rawTranscript   String?
   cleanTranscript String?
-  aiSummary       String?  // Concise AI summary of candidate answer
-  keyPoints       String?  // Key bullet takeaways
-  score           Float?   // Interviewer score rating (e.g. 8.5)
-  comments        String?  // Interviewer feedback comments
+  aiSummary       String?
+  keyPoints       String?
+  score           Float?
+  comments        String?
   durationSec     Int?
   notes           String?
   isActive        Boolean  @default(true)

@@ -21,7 +21,7 @@ const storage = multer.diskStorage({
 
 const upload = multer({ storage });
 
-module.exports = (prisma) => {
+module.exports = (prisma, io) => {
   // GET all candidates
   router.get("/", async (req, res) => {
     try {
@@ -29,8 +29,10 @@ module.exports = (prisma) => {
         orderBy: { createdAt: "desc" },
         include: {
           sessions: {
+            orderBy: { startedAt: "asc" },
             include: {
-              recordings: true
+              recordings: true,
+              audioClips: { orderBy: { recordedAt: "asc" } }
             }
           }
         }
@@ -48,10 +50,12 @@ module.exports = (prisma) => {
         where: { id: req.params.id },
         include: {
           sessions: {
+            orderBy: { startedAt: "asc" },
             include: {
               recordings: {
                 include: { question: true }
-              }
+              },
+              audioClips: { orderBy: { recordedAt: "asc" } }
             }
           }
         }
@@ -211,6 +215,191 @@ module.exports = (prisma) => {
     }
   });
 
+  // PATCH update candidate fields (name, branch/section, domains, AAC domain, CGPA, attendance)
+  router.patch("/:id", async (req, res) => {
+    try {
+      const { name, branchAndSection, domainsAppliedFor, domainInAAC, cgpa, currentAttendance } = req.body;
+
+      const updateData = {};
+      if (name !== undefined) updateData.name = String(name).trim();
+      if (branchAndSection !== undefined) updateData.branchAndSection = String(branchAndSection).trim();
+      if (domainsAppliedFor !== undefined) updateData.domainsAppliedFor = String(domainsAppliedFor).trim();
+      if (domainInAAC !== undefined) updateData.domainInAAC = String(domainInAAC).trim();
+      if (cgpa !== undefined) updateData.cgpa = String(cgpa).trim();
+      if (currentAttendance !== undefined) updateData.currentAttendance = String(currentAttendance).trim();
+
+      const updated = await prisma.candidate.update({
+        where: { id: req.params.id },
+        data: updateData,
+        include: {
+          sessions: {
+            orderBy: { startedAt: "asc" },
+            include: {
+              recordings: { include: { question: true } },
+              audioClips: { orderBy: { recordedAt: "asc" } }
+            }
+          }
+        }
+      });
+
+      if (io) {
+        io.emit("candidate_updated", { candidateId: updated.id });
+      }
+
+      res.json(updated);
+    } catch (err) {
+      console.error("[Candidates] Update error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH /:id/feedback — save interviewer score & comment by candidateId + questionIndex
+  // The frontend doesn't know the recording row ID, only candidateId + questionIndex
+  router.patch("/:id/feedback", async (req, res) => {
+    try {
+      const candidateId = req.params.id;
+      const { questionIndex, score, comment } = req.body;
+
+      if (questionIndex === undefined) {
+        return res.status(400).json({ error: "questionIndex is required" });
+      }
+
+      // Find the latest session for this candidate
+      const candidate = await prisma.candidate.findUnique({
+        where: { id: candidateId },
+        include: {
+          sessions: {
+            orderBy: { startedAt: "desc" },
+            take: 1,
+            include: {
+              recordings: {
+                include: { question: true },
+                orderBy: { recordedAt: "desc" }
+              }
+            }
+          }
+        }
+      });
+
+      if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+
+      let latestSession = candidate.sessions[0];
+
+      if (!latestSession) {
+        // Auto-create a session if none exists yet so feedback can always be recorded
+        latestSession = await prisma.session.create({
+          data: {
+            candidateId: candidate.id,
+            interviewer: "Lead Interviewer",
+            status: "in_progress"
+          },
+          include: {
+            recordings: {
+              include: { question: true }
+            }
+          }
+        });
+      }
+
+      // Fetch questions ordered by creation date
+      const questions = await prisma.question.findMany({ orderBy: { createdAt: "asc" } });
+
+      if (!questions || questions.length === 0) {
+        return res.status(400).json({ error: "No questions found in database" });
+      }
+
+      // Match target question positionally (questionIndex is 1-based: 1 to 12)
+      const targetQuestion =
+        questions[Number(questionIndex) - 1] ||
+        questions[0];
+
+      // Find if recording already exists for this question in the current session
+      let recording = (latestSession.recordings || []).find(
+        (r) => r.questionId === targetQuestion.id
+      ) || null;
+
+      if (recording) {
+        // Update existing recording
+        recording = await prisma.recording.update({
+          where: { id: recording.id },
+          data: {
+            score: score !== undefined && score !== null && score !== "" ? parseFloat(score) : null,
+            comments: comment !== undefined ? String(comment).trim() : undefined
+          },
+          include: { question: true }
+        });
+      } else {
+        // Create new recording row with the interviewer's feedback
+        recording = await prisma.recording.create({
+          data: {
+            sessionId: latestSession.id,
+            questionId: targetQuestion.id,
+            takeNumber: 1,
+            rawTranscript: "[Score/comment added manually]",
+            cleanTranscript: "[Score/comment added manually]",
+            aiSummary: "",
+            score: score !== undefined && score !== null && score !== "" ? parseFloat(score) : null,
+            comments: comment !== undefined ? String(comment).trim() : "",
+            durationSec: 0,
+            isActive: true
+          },
+          include: { question: true }
+        });
+      }
+
+      res.json(recording);
+    } catch (err) {
+      console.error("[Candidates] Feedback save error:", err);
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH toggle candidate flag
+  router.patch("/:id/flag", async (req, res) => {
+    try {
+      const candidate = await prisma.candidate.findUnique({ where: { id: req.params.id } });
+      if (!candidate) return res.status(404).json({ error: "Candidate not found" });
+
+      const updated = await prisma.candidate.update({
+        where: { id: req.params.id },
+        data: { isFlagged: !candidate.isFlagged },
+        include: {
+          sessions: {
+            include: { recordings: true }
+          }
+        }
+      });
+
+      // Broadcast to all connected devices
+      if (io) {
+        io.emit("candidate_updated", { candidateId: updated.id, isFlagged: updated.isFlagged });
+      }
+
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
+  // PATCH update candidate status
+  router.patch("/:id/status", async (req, res) => {
+    try {
+      const { status } = req.body;
+      const updated = await prisma.candidate.update({
+        where: { id: req.params.id },
+        data: { status },
+        include: {
+          sessions: {
+            include: { recordings: true }
+          }
+        }
+      });
+      res.json(updated);
+    } catch (err) {
+      res.status(500).json({ error: err.message });
+    }
+  });
+
   // DELETE candidate
   router.delete("/:id", async (req, res) => {
     try {
@@ -225,3 +414,4 @@ module.exports = (prisma) => {
 
   return router;
 };
+

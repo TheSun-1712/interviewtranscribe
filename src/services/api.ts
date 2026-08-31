@@ -1,6 +1,6 @@
 /**
  * Centralized HTTP client for the Interview Transcribe & Evaluation backend.
- * Base URL: http://localhost:4000/api
+ * Base URL: http://<host>:4000/api
  */
 
 export type CandidateStatus = "not_started" | "in_progress" | "complete";
@@ -16,6 +16,29 @@ export interface QuestionAnswer {
   comment: string;
 }
 
+export interface AudioClip {
+  id: string;
+  sessionId: string;
+  filePath: string;
+  audioUrl: string;
+  durationSec: number | null;
+  transcript: string | null;
+  status: "pending" | "transcribing" | "done" | "error";
+  recordedAt: string;
+}
+
+export interface SessionState {
+  id: string;
+  recordingLockDevice: string | null;
+  lockAcquiredAt: string | null;
+  isTranscribing: boolean;
+  isAnalyzing: boolean;
+  transcriptionStatus: "none" | "done" | "error";
+  analysisStatus: "none" | "done" | "error";
+  fullTranscript: string | null;
+  clips: AudioClip[];
+}
+
 export interface Candidate {
   id: string;
   fullName: string;
@@ -26,9 +49,11 @@ export interface Candidate {
   cgpa: number;
   attendance: number;
   status: CandidateStatus;
+  isFlagged: boolean;
   recordingsCount: number;
   answeredCount: number;
   answers: QuestionAnswer[];
+  sessionState?: SessionState | null;
 }
 
 export interface QuestionTemplate {
@@ -74,7 +99,14 @@ function mapBackendCandidate(cand: any): Candidate {
     : Array.isArray(rawDomains) ? rawDomains : [String(rawDomains)];
 
   const candidateRecordings = Array.isArray(cand.sessions)
-    ? cand.sessions.flatMap((s: any) => s.recordings || [])
+    ? cand.sessions
+        .flatMap((s: any) => s.recordings || [])
+        // Sort by question createdAt or recording recordedAt
+        .sort((a: any, b: any) => {
+          const aTime = a.question?.createdAt ? new Date(a.question.createdAt).getTime() : (a.recordedAt ? new Date(a.recordedAt).getTime() : 0);
+          const bTime = b.question?.createdAt ? new Date(b.question.createdAt).getTime() : (b.recordedAt ? new Date(b.recordedAt).getTime() : 0);
+          return aTime - bTime;
+        })
     : [];
 
   const recCount = candidateRecordings.length || cand.recordingsCount || 0;
@@ -96,13 +128,19 @@ function mapBackendCandidate(cand: any): Candidate {
   ];
 
   let answeredCount = 0;
-  const answers: QuestionAnswer[] = defaultQuestions.map((q) => {
+  const answers: QuestionAnswer[] = defaultQuestions.map((q, idx) => {
     const matchedRec = candidateRecordings.find(
       (r: any) =>
         r.question?.qNumber === q.index ||
         r.question?.id === `q_${q.index}` ||
-        r.questionId === `q_${q.index}`
-    ) || candidateRecordings[q.index - 1];
+        r.questionId === `q_${q.index}` ||
+        (r.question?.text && q.prompt && (
+          r.question.text.toLowerCase().trim() === q.prompt.toLowerCase().trim() ||
+          r.question.text.toLowerCase().includes(q.prompt.toLowerCase().slice(0, 15)) ||
+          q.prompt.toLowerCase().includes(r.question.text.toLowerCase().slice(0, 15))
+        )) ||
+        (r.question?.category && r.question.category === q.category)
+    ) ?? candidateRecordings[idx] ?? null;
 
     const rawAns = matchedRec?.cleanTranscript || matchedRec?.rawTranscript;
     const rawSum = matchedRec?.aiSummary;
@@ -136,6 +174,25 @@ function mapBackendCandidate(cand: any): Candidate {
     finalStatus = "in_progress";
   }
 
+  // Get the latest session state (clips, lock, transcription status)
+  const latestSession = Array.isArray(cand.sessions) && cand.sessions.length > 0
+    ? cand.sessions[cand.sessions.length - 1]
+    : null;
+
+  const sessionState: SessionState | null = latestSession
+    ? {
+        id: latestSession.id,
+        recordingLockDevice: latestSession.recordingLockDevice || null,
+        lockAcquiredAt: latestSession.lockAcquiredAt || null,
+        isTranscribing: latestSession.isTranscribing || false,
+        isAnalyzing: latestSession.isAnalyzing || false,
+        transcriptionStatus: latestSession.transcriptionStatus || "none",
+        analysisStatus: latestSession.analysisStatus || "none",
+        fullTranscript: latestSession.fullTranscript || null,
+        clips: latestSession.audioClips || []
+      }
+    : null;
+
   return {
     id: cand.id,
     fullName: cand.name || cand.fullName || "Candidate",
@@ -146,9 +203,11 @@ function mapBackendCandidate(cand: any): Candidate {
     cgpa: parseFloat(cand.cgpa) || 8.5,
     attendance: parseFloat(cand.currentAttendance) || 85,
     status: finalStatus,
+    isFlagged: cand.isFlagged || false,
     recordingsCount: recCount,
     answeredCount,
-    answers
+    answers,
+    sessionState
   };
 }
 
@@ -227,6 +286,102 @@ export const updateCandidateStatus = async (id: string, status: CandidateStatus)
   return mapBackendCandidate(data);
 };
 
+export const flagCandidate = async (id: string): Promise<Candidate> => {
+  const data = await request<any>(`/candidates/${id}/flag`, {
+    method: "PATCH"
+  });
+  return mapBackendCandidate(data);
+};
+
+/* ------------------------------- sessions -------------------------------- */
+
+export const createSession = async (candidateId: string): Promise<{ id: string }> => {
+  const data = await request<any>("/sessions", {
+    method: "POST",
+    body: JSON.stringify({ candidateId, interviewer: "Lead Interviewer" })
+  });
+  return { id: data.id };
+};
+
+export const fetchSession = async (sessionId: string): Promise<any> => {
+  return request<any>(`/sessions/${sessionId}`);
+};
+
+/* ------------------------------- clips ----------------------------------- */
+
+/** Generate a stable device ID stored in sessionStorage */
+export const getDeviceId = (): string => {
+  let id = sessionStorage.getItem("interview_device_id");
+  if (!id) {
+    id = `device_${Date.now()}_${Math.random().toString(36).substring(2, 9)}`;
+    sessionStorage.setItem("interview_device_id", id);
+  }
+  return id;
+};
+
+/** Try to acquire the recording lock for a session */
+export const acquireRecordingLock = async (
+  sessionId: string,
+  deviceId: string
+): Promise<{ acquired: boolean; lockedBy?: string }> => {
+  try {
+    await request<any>(`/sessions/${sessionId}/acquire-lock`, {
+      method: "POST",
+      body: JSON.stringify({ deviceId })
+    });
+    return { acquired: true };
+  } catch (err: any) {
+    if (err.message?.startsWith("409")) {
+      return { acquired: false, lockedBy: "another device" };
+    }
+    throw err;
+  }
+};
+
+/** Release the recording lock */
+export const releaseRecordingLock = async (sessionId: string): Promise<void> => {
+  await request<any>(`/sessions/${sessionId}/release-lock`, { method: "POST" });
+};
+
+/** Upload a single audio clip to the server (saves to disk immediately) */
+export const uploadAudioClip = async (
+  sessionId: string,
+  blob: Blob,
+  durationSec: number,
+  deviceId: string
+): Promise<AudioClip> => {
+  const form = new FormData();
+  form.append("audio", blob, `clip_${sessionId}_${Date.now()}.webm`);
+  form.append("sessionId", sessionId);
+  form.append("deviceId", deviceId);
+  form.append("durationSec", String(durationSec));
+
+  return request<AudioClip>("/clips", {
+    method: "POST",
+    body: form
+  });
+};
+
+/** Fetch all clips for a session */
+export const fetchClips = async (sessionId: string): Promise<AudioClip[]> => {
+  return request<AudioClip[]>(`/clips?sessionId=${sessionId}`);
+};
+
+/** Delete a specific clip */
+export const deleteClip = async (clipId: string): Promise<void> => {
+  await request<any>(`/clips/${clipId}`, { method: "DELETE" });
+};
+
+/** Trigger transcription (runs Whisper on all pending clips asynchronously) */
+export const triggerTranscription = async (sessionId: string): Promise<void> => {
+  await request<any>(`/sessions/${sessionId}/transcribe`, { method: "POST" });
+};
+
+/** Trigger LLM analysis (runs after transcription is done) */
+export const triggerLLMAnalysis = async (sessionId: string): Promise<void> => {
+  await request<any>(`/sessions/${sessionId}/analyze`, { method: "POST" });
+};
+
 /* ------------------------------- recordings ------------------------------ */
 
 export interface UploadResult {
@@ -234,63 +389,14 @@ export interface UploadResult {
   answers: QuestionAnswer[];
 }
 
-export const uploadFullSessionRecording = async (candidateId: string, blob: Blob, durationSec: number): Promise<UploadResult> => {
-  // Step 1: create (or reuse) a session for this candidate
-  let sessionId: string;
-  try {
-    const sess = await request<any>("/sessions", {
-      method: "POST",
-      body: JSON.stringify({ candidateId, interviewer: "Lead Interviewer" })
-    });
-    sessionId = sess.id;
-  } catch {
-    // Fallback: use candidateId directly (backend will auto-create candidate lookup)
-    sessionId = candidateId;
-  }
-
-  // Step 2: upload the full recording audio to the session
-  const form = new FormData();
-  form.append("audio", blob, `full_interview_${candidateId}_${Date.now()}.webm`);
-  form.append("durationSec", String(durationSec));
-  form.append("candidateId", candidateId);
-
-  const data = await request<any>(`/sessions/${sessionId}/full-recording`, {
-    method: "POST",
-    body: form
-  });
-
-  const updatedCand = mapBackendCandidate(data.candidate || data);
-  return {
-    recordingId: data.id || `rec_${Date.now()}`,
-    answers: updatedCand.answers
-  };
-};
-
-export const uploadRecordingTake = async (candidateId: string, questionIndex: number, blob: Blob): Promise<UploadResult> => {
-  const form = new FormData();
-  form.append("audio", blob, `take_${candidateId}_q${questionIndex}.webm`);
-  form.append("questionIndex", String(questionIndex));
-
-  const data = await request<any>(`/sessions/${candidateId}/full-recording`, {
-    method: "POST",
-    body: form
-  });
-
-  const updatedCand = mapBackendCandidate(data.candidate || data);
-  return {
-    recordingId: data.id || `rec_${Date.now()}`,
-    answers: updatedCand.answers
-  };
-};
-
 export const saveFeedback = async (
   candidateId: string,
   questionIndex: number,
   payload: { score: number | null; comment: string }
 ): Promise<QuestionAnswer> => {
-  const data = await request<any>(`/recordings/${candidateId}/feedback`, {
+  const data = await request<any>(`/candidates/${candidateId}/feedback`, {
     method: "PATCH",
-    body: JSON.stringify({ questionIndex, ...payload })
+    body: JSON.stringify({ questionIndex, score: payload.score, comment: payload.comment })
   });
 
   return {
@@ -305,7 +411,38 @@ export const saveFeedback = async (
   };
 };
 
+
 /* ------------------------------- questions ------------------------------- */
+
+export type CandidateUpdateInput = {
+  fullName?: string;
+  branch?: string;
+  section?: string;
+  domains?: string[];
+  aacDomain?: string;
+  cgpa?: number;
+  attendance?: number;
+};
+
+export const updateCandidate = async (id: string, input: CandidateUpdateInput): Promise<Candidate> => {
+  const payload: Record<string, string> = {};
+  if (input.fullName !== undefined) payload.name = input.fullName;
+  if (input.branch !== undefined || input.section !== undefined) {
+    // We need both for branchAndSection — fetch current if only one provided
+    payload.branchAndSection = `${input.branch ?? ""} - ${input.section ?? ""}`;
+  }
+  if (input.domains !== undefined) payload.domainsAppliedFor = input.domains.join(", ");
+  if (input.aacDomain !== undefined) payload.domainInAAC = input.aacDomain;
+  if (input.cgpa !== undefined) payload.cgpa = String(input.cgpa);
+  if (input.attendance !== undefined) payload.currentAttendance = `${input.attendance}%`;
+
+  const data = await request<any>(`/candidates/${id}`, {
+    method: "PATCH",
+    body: JSON.stringify(payload)
+  });
+  return mapBackendCandidate(data);
+};
+
 
 export const fetchQuestions = async (): Promise<QuestionTemplate[]> => {
   try {
@@ -364,4 +501,38 @@ export const resetDatabase = async (password: string): Promise<{ ok: boolean }> 
     body: JSON.stringify({ password })
   });
   return { ok: Boolean(data.success) };
+};
+
+// Keep legacy export for backward compat
+export const uploadFullSessionRecording = async (
+  candidateId: string,
+  blob: Blob,
+  durationSec: number
+): Promise<UploadResult> => {
+  let sessionId: string;
+  try {
+    const sess = await request<any>("/sessions", {
+      method: "POST",
+      body: JSON.stringify({ candidateId, interviewer: "Lead Interviewer" })
+    });
+    sessionId = sess.id;
+  } catch {
+    sessionId = candidateId;
+  }
+
+  const form = new FormData();
+  form.append("audio", blob, `full_interview_${candidateId}_${Date.now()}.webm`);
+  form.append("durationSec", String(durationSec));
+  form.append("candidateId", candidateId);
+
+  const data = await request<any>(`/sessions/${sessionId}/full-recording`, {
+    method: "POST",
+    body: form
+  });
+
+  const updatedCand = mapBackendCandidate(data.candidate || data);
+  return {
+    recordingId: data.id || `rec_${Date.now()}`,
+    answers: updatedCand.answers
+  };
 };

@@ -2,103 +2,77 @@ const fetch = require("node-fetch");
 const { stripFillerWords, smartClassifyTranscript } = require("./heuristicClassifier");
 
 /**
- * Universal LLM Request Helper with Fast Failover & Timeouts
- * Tier 1: Groq Cloud GPT-OSS (openai/gpt-oss-20b) — Lightning fast (~400ms)
- * Tier 2: Google Gemini 3.6 Flash (gemini-3.6-flash) — Fallback with 6s timeout
- * Tier 3: Smart Local Heuristic Search Classifier (0ms offline safety net)
+ * Call local Ollama LLM (qwen3.5:4b) via its OpenAI-compatible API.
+ *
+ * Ollama must be running: `ollama serve` (usually auto-started).
+ * Model must be pulled:    `ollama pull qwen3.5:4b`
+ *
+ * Tier 1: Ollama qwen3.5:4b at localhost:11434 (~2–10s on CPU)
+ * Tier 2: Smart local heuristic classifier (0ms offline safety net)
  */
 async function callLLM(systemPrompt, userPrompt, settings = {}, temperature = 0.1) {
-  const geminiKey = settings.geminiApiKey || process.env.GEMINI_API_KEY || "";
-  const groqKey = settings.groqApiKey || process.env.GROQ_API_KEY || "";
+  const ollamaBaseUrl =
+    settings.llmBaseUrl ||
+    process.env.OLLAMA_BASE_URL ||
+    "http://localhost:11434/v1";
 
-  // -------------------------------------------------------------
-  // TIER 1: GROQ CLOUD OPENAI/GPT-OSS-20B (FAST: ~400ms)
-  // -------------------------------------------------------------
-  if (groqKey && groqKey.startsWith("gsk_")) {
-    try {
-      console.log("[LLM Service] Tier 1: Calling Groq (openai/gpt-oss-20b)...");
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 5000);
+  const model =
+    settings.llmModel ||
+    process.env.OLLAMA_MODEL ||
+    "qwen3.5:4b";
 
-      const response = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "Authorization": `Bearer ${groqKey}`
-        },
-        body: JSON.stringify({
-          model: "openai/gpt-oss-20b",
-          messages: [
-            { role: "system", content: systemPrompt },
-            { role: "user", content: userPrompt }
-          ],
-          temperature: temperature
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
+  // -------------------------------------------------------
+  // TIER 1: OLLAMA LOCAL LLM (qwen3.5:4b)
+  // -------------------------------------------------------
+  try {
+    console.log(`[LLM] Calling Ollama (${model}) at ${ollamaBaseUrl} ...`);
+    const controller = new AbortController();
+    // Local inference can take time — 90s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 90000);
 
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.choices?.[0]?.message?.content?.trim();
-        if (text) {
-          console.log("[Groq GPT-OSS-20B Success] Fast summary generated.");
-          return stripFillerWords(text);
-        }
-      } else {
-        const errTxt = await response.text();
-        console.warn(`[Groq GPT-OSS Error ${response.status}]:`, errTxt);
+    const response = await fetch(`${ollamaBaseUrl}/chat/completions`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        model,
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt }
+        ],
+        temperature,
+        stream: false,
+        // Disable Qwen3 chain-of-thought <think> tags for clean output
+        think: false
+      }),
+      signal: controller.signal
+    });
+    clearTimeout(timeoutId);
+
+    if (response.ok) {
+      const data = await response.json();
+      let text = data.choices?.[0]?.message?.content?.trim();
+      if (text) {
+        // Strip any residual <think>...</think> blocks Qwen3 may emit
+        text = text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim();
+        console.log(`[LLM] Ollama success (${model}).`);
+        return stripFillerWords(text);
       }
-    } catch (err) {
-      console.warn("[Groq Exception/Timeout]:", err.message);
+    } else {
+      const errTxt = await response.text();
+      console.warn(`[LLM] Ollama error ${response.status}:`, errTxt);
+    }
+  } catch (err) {
+    if (err.name === "AbortError") {
+      console.warn("[LLM] Ollama timed out after 90s.");
+    } else {
+      console.warn("[LLM] Ollama unavailable:", err.message);
+      console.warn("[LLM] Make sure Ollama is running: `ollama serve`");
     }
   }
 
-  // -------------------------------------------------------------
-  // TIER 2: GOOGLE GEMINI 3.6 FLASH (6s TIMEOUT FALLBACK)
-  // -------------------------------------------------------------
-  if (geminiKey) {
-    try {
-      console.log("[LLM Service] Tier 2: Calling Google Gemini Flash (gemini-3.6-flash)...");
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 6000);
-
-      const geminiUrl = `https://generativelanguage.googleapis.com/v1beta/models/gemini-3.6-flash:generateContent?key=${geminiKey}`;
-
-      const response = await fetch(geminiUrl, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: "user",
-              parts: [{ text: `${systemPrompt}\n\n${userPrompt}` }]
-            }
-          ],
-          generationConfig: {
-            temperature: temperature
-          }
-        }),
-        signal: controller.signal
-      });
-      clearTimeout(timeoutId);
-
-      if (response.ok) {
-        const data = await response.json();
-        const text = data.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
-        if (text) {
-          console.log("[Gemini Flash Success] Output generated cleanly.");
-          return stripFillerWords(text);
-        }
-      } else {
-        const errTxt = await response.text();
-        console.warn(`[Gemini API Error ${response.status}]:`, errTxt);
-      }
-    } catch (err) {
-      console.warn("[Gemini API Exception/Timeout]:", err.message);
-    }
-  }
-
+  // -------------------------------------------------------
+  // TIER 2: Return null — caller falls back to heuristics
+  // -------------------------------------------------------
   return null;
 }
 
@@ -148,7 +122,7 @@ async function cleanTranscriptWithLLM(rawTranscript, settings = {}) {
 }
 
 /**
- * Generate a concise 1-2 sentence executive AI summary of ONLY candidate response in English
+ * Generate a concise 1-2 sentence executive AI summary of ONLY candidate response
  */
 async function summarizeCandidateResponse(rawTranscript, questionText = "", settings = {}) {
   if (!rawTranscript || !rawTranscript.trim()) return "No response recorded";
@@ -160,7 +134,8 @@ Analyze the provided transcript segment and write a concise 1 to 2 sentence exec
 RULES:
 1. Summarize candidate's core skills, experience, project approach, or background in clean English.
 2. DO NOT mention or quote the interviewer's question.
-3. Exclude all speech filler words ('uhm', 'so yeah', 'basically').`;
+3. Exclude all speech filler words ('uhm', 'so yeah', 'basically').
+4. Output ONLY the summary sentence(s). No preamble, no labels.`;
 
   const userPrompt = `Target Question: "${questionText}"\n\nTranscript Segment:\n"${cleanInput}"\n\nConcise Executive AI Summary in English:`;
   const summary = await callLLM(systemPrompt, userPrompt, settings, 0.2);
@@ -193,7 +168,7 @@ async function divideAndCategorizeInterviewWithLLM(QandAList, settings = {}) {
 /**
  * TWO-PASS Full Continuous Interview Analyzer:
  * Pass 1: Speaker Diarization ([INTERVIEWER] vs [CANDIDATE]).
- * Pass 2: Question-by-Question Section Segmenter & Executive Summarizer in English.
+ * Pass 2: Question-by-Question Section Segmenter & Executive Summarizer.
  * Fallback: Smart Local Heuristic Search Classifier (0ms safety net).
  */
 async function parseAndDivideFullInterviewWithLLM(fullTranscriptText, questionsList = [], settings = {}) {
@@ -306,7 +281,7 @@ Return ONLY a JSON array of objects for all 12 questions with keys:
     }
   }
 
-  console.log("[LLM Pipeline] Executing Smart Local Heuristic Search Classifier Safety Net...");
+  console.log("[LLM Pipeline] Ollama unavailable — using Smart Local Heuristic Classifier as fallback.");
   return fallbackResults;
 }
 
