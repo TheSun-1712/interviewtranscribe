@@ -2,7 +2,7 @@ const express = require("express");
 const multer = require("multer");
 const path = require("path");
 const fs = require("fs");
-const { HOST_IP } = require("../services/cloudinary");
+const { getHostIp } = require("../services/cloudinary");
 const { transcribeAudio } = require("../services/transcription");
 const { parseAndDivideFullInterviewWithLLM } = require("../services/llm");
 
@@ -55,7 +55,8 @@ module.exports = (prisma, io) => {
 
       const filePath = req.file.path;
       const fileName = path.basename(filePath);
-      const audioUrl = `http://${HOST_IP}:${process.env.PORT || 4000}/uploads/recordings/${fileName}`;
+      const hostIp = getHostIp();
+      const audioUrl = `http://${hostIp}:${process.env.PORT || 4000}/uploads/recordings/${fileName}`;
 
       const clip = await prisma.audioClip.create({
         data: {

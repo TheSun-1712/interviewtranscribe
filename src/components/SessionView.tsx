@@ -4,6 +4,8 @@ import { Link } from "@tanstack/react-router";
 import {
   ArrowLeft,
   CheckCircle2,
+  ChevronDown,
+  ChevronUp,
   Circle,
   Download,
   Loader2,
@@ -18,6 +20,7 @@ import {
   FileText,
   Lock,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { toast } from "sonner";
 import {
@@ -39,7 +42,7 @@ import {
   DialogTitle,
   DialogFooter,
 } from "./ui/dialog";
-import { formatDuration, useAudioRecorder } from "../hooks/useAudioRecorder";
+import { formatDuration, useAudioRecorder, isSecureContextOrLocal } from "../hooks/useAudioRecorder";
 import { useSocket } from "../hooks/useSocket";
 import {
   fetchCandidate,
@@ -241,6 +244,8 @@ function ClipCard({
   index: number;
   onDelete: (id: string) => void;
 }) {
+  const [expanded, setExpanded] = useState(false);
+
   const statusColor =
     clip.status === "done"
       ? "text-success"
@@ -259,8 +264,10 @@ function ClipCard({
           ? "Error"
           : "Pending";
 
+  const isLongTranscript = Boolean(clip.transcript && clip.transcript.length > 120);
+
   return (
-    <div className="glass-panel flex items-center gap-3 p-3 border border-border/50">
+    <div className="glass-panel flex items-start gap-3 p-3 border border-border/50">
       <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-primary/10 text-sm font-bold text-primary">
         {index + 1}
       </div>
@@ -278,15 +285,40 @@ function ClipCard({
           <span className={statusColor}>{statusLabel}</span>
         </div>
         {clip.transcript && clip.status === "done" && (
-          <p className="mt-1 text-xs text-foreground/70 line-clamp-2 italic">
-            "{clip.transcript.slice(0, 120)}{clip.transcript.length > 120 ? "…" : ""}"
-          </p>
+          <div className="mt-1.5 text-xs text-foreground/80">
+            {isLongTranscript ? (
+              <div>
+                <p className="italic leading-relaxed whitespace-pre-wrap">
+                  "{expanded ? clip.transcript : `${clip.transcript.slice(0, 120)}…`}"
+                </p>
+                <button
+                  type="button"
+                  onClick={() => setExpanded(!expanded)}
+                  className="mt-1 inline-flex items-center gap-0.5 text-[11px] font-medium text-primary hover:text-primary/80 hover:underline transition-colors focus:outline-none"
+                >
+                  {expanded ? (
+                    <>
+                      <span>Show less</span>
+                      <ChevronUp className="h-3 w-3" />
+                    </>
+                  ) : (
+                    <>
+                      <span>Read more</span>
+                      <ChevronDown className="h-3 w-3" />
+                    </>
+                  )}
+                </button>
+              </div>
+            ) : (
+              <p className="italic leading-relaxed whitespace-pre-wrap">"{clip.transcript}"</p>
+            )}
+          </div>
         )}
       </div>
       <Button
         variant="ghost"
         size="icon"
-        className="h-7 w-7 text-destructive/70 hover:text-destructive"
+        className="h-7 w-7 shrink-0 text-destructive/70 hover:text-destructive"
         onClick={() => onDelete(clip.id)}
       >
         <Trash2 className="h-3.5 w-3.5" />
@@ -550,7 +582,22 @@ export function SessionView({ candidateId }: { candidateId: string }) {
       return;
     }
     setLockStatus("mine");
-    await recorder.start();
+
+    try {
+      const started = await recorder.start();
+      if (!started) {
+        // Rollback lock if recording failed (e.g. permission blocked or insecure origin)
+        try {
+          await releaseRecordingLock(sessionId);
+        } catch (e) {}
+        setLockStatus("free");
+      }
+    } catch (err: any) {
+      try {
+        await releaseRecordingLock(sessionId);
+      } catch (e) {}
+      setLockStatus("free");
+    }
   };
 
   // Stop recording — upload clip immediately to disk
@@ -700,6 +747,26 @@ export function SessionView({ candidateId }: { candidateId: string }) {
           )}
         </div>
 
+        {!isSecureContextOrLocal() && (
+          <div className="rounded-xl border border-warning/40 bg-warning/10 p-4 text-xs text-warning flex items-start gap-3">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-warning" />
+            <div className="space-y-1.5 text-foreground/90">
+              <p className="font-semibold text-warning">Mobile Microphone Notice (Secure Context Required)</p>
+              <p className="text-muted-foreground leading-relaxed">
+                Mobile browsers block microphone access over plain HTTP. To enable recording on this phone:
+              </p>
+              <ul className="list-disc pl-4 space-y-1 text-muted-foreground">
+                <li>
+                  <strong className="text-foreground">Android Chrome:</strong> Open <code className="rounded bg-secondary px-1 py-0.5 font-mono text-[11px] text-foreground">chrome://flags/#unsafely-treat-insecure-origin-as-secure</code>, enter <code className="rounded bg-secondary px-1 py-0.5 font-mono text-[11px] text-foreground">{typeof window !== "undefined" ? `http://${window.location.host}` : "http://<IP>:5173"}</code>, set to <strong>Enabled</strong>, and tap <strong>Relaunch</strong>.
+                </li>
+                <li>
+                  <strong className="text-foreground">Any Device / iOS:</strong> Run a secure tunnel from your PC terminal (<code className="rounded bg-secondary px-1 py-0.5 font-mono text-[11px] text-foreground">npx localtunnel --port 5173</code>) and open the generated HTTPS link on your phone.
+                </li>
+              </ul>
+            </div>
+          </div>
+        )}
+
         {/* Timer + Buttons */}
         <div className="flex flex-wrap items-center gap-5">
           <div className="flex items-center gap-3">
@@ -789,11 +856,17 @@ export function SessionView({ candidateId }: { candidateId: string }) {
               </span>
             )}
           </div>
-
-          {recorder.error && (
-            <p className="text-sm text-destructive">{recorder.error}</p>
-          )}
         </div>
+
+        {recorder.error && (
+          <div className="rounded-xl border border-destructive/40 bg-destructive/10 p-3.5 text-xs text-destructive flex items-start gap-2.5">
+            <AlertTriangle className="h-4 w-4 shrink-0 mt-0.5 text-destructive" />
+            <div className="space-y-0.5">
+              <span className="font-semibold block">Microphone Notice</span>
+              <p className="leading-relaxed text-destructive/90">{recorder.error}</p>
+            </div>
+          </div>
+        )}
 
         {/* Saved clips list */}
         {hasClips && (

@@ -68,8 +68,16 @@ export interface SessionUser {
   role: "interviewer" | "panel_lead";
 }
 
+const defaultHost =
+  typeof window !== "undefined" && window.location.hostname
+    ? window.location.hostname
+    : "localhost";
+
+const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+
 export const API_BASE_URL =
-  (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ?? "http://localhost:4000/api";
+  (import.meta.env["VITE_API_BASE_URL"] as string | undefined) ??
+  (isHttps ? "/api" : `http://${defaultHost}:4000/api`);
 
 export type ApiMode = "live" | "mock";
 
@@ -351,7 +359,16 @@ export const uploadAudioClip = async (
   deviceId: string
 ): Promise<AudioClip> => {
   const form = new FormData();
-  form.append("audio", blob, `clip_${sessionId}_${Date.now()}.webm`);
+  const ext = blob.type.includes("mp4")
+    ? ".mp4"
+    : blob.type.includes("wav")
+      ? ".wav"
+      : blob.type.includes("ogg")
+        ? ".ogg"
+        : blob.type.includes("aac")
+          ? ".aac"
+          : ".webm";
+  form.append("audio", blob, `clip_${sessionId}_${Date.now()}${ext}`);
   form.append("sessionId", sessionId);
   form.append("deviceId", deviceId);
   form.append("durationSec", String(durationSec));

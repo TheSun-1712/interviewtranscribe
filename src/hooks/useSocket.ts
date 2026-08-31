@@ -1,10 +1,17 @@
 import { useEffect, useRef, useCallback } from "react";
 import { io, Socket } from "socket.io-client";
 
+const defaultHost =
+  typeof window !== "undefined" && window.location.hostname
+    ? window.location.hostname
+    : "localhost";
+
+const isHttps = typeof window !== "undefined" && window.location.protocol === "https:";
+
 // Use the backend base URL from the API service (same host/port)
 const BACKEND_URL =
   (import.meta.env["VITE_API_BASE_URL"] as string | undefined)?.replace("/api", "") ??
-  "http://localhost:4000";
+  (isHttps ? window.location.origin : `http://${defaultHost}:4000`);
 
 // Singleton socket instance shared across all hook usages
 let globalSocket: Socket | null = null;
